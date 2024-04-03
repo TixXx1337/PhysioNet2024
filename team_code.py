@@ -26,7 +26,8 @@ import copy
 import glob
 import torch.nn as nn
 import torch.optim as optim
-from training import Ecg12LeadImageNetTrainerBinary
+from trainer import Ecg12LeadImageNetTrainerBinary
+import Dataloader
 
 from helper_code import *
 
@@ -170,16 +171,16 @@ def train_dx_model(data_folder, model_folder, verbose):
 
 
 
-    dataset = ECG_Multilead_Dataset(path_to_dataset=data_folder)
-    train_dl = torch.utils.data.DataLoader(dataset, batch_size=16)
+    dataset = Dataloader.ECG_Multilead_Dataset(path_to_dataset=data_folder, verbose=True)
+    train_dl = torch.utils.data.DataLoader(dataset, batch_size=100, shuffle=True, num_workers=4)
 
     lr = 0.01
-    epochs = 1
+    epochs = 100
     loss_fn = nn.BCEWithLogitsLoss()
 
     optimizer = optim.Adam(model.parameters(), lr=lr)
     trainer = Ecg12LeadImageNetTrainerBinary(model, loss_fn, optimizer, device)
-    fitResult = trainer.fit(train_dl,None, num_epochs=epochs, early_stopping=100, print_every=1)
+    fitResult = trainer.fit(train_dl,None, num_epochs=40, early_stopping=100, print_every=1)
     torch.save(copy.deepcopy(model.state_dict()), os.path.join(model_folder,"dx_model.pt"))
 
 
@@ -318,26 +319,26 @@ def save_dx_model(model_folder, model, classes):
 
 
 
-"""
+
 if __name__ == '__main__':
 
-    input = "ptb-xl/records100/00000"
-    train_dx_model(input, model_folder="model", verbose=False)
-    classes = {0:"Normal", 1:"Abnormal"}
-    records = find_records(input)
-    model = load_dx_model("model", verbose=True)
-    model.eval()
-    results_df = {"label":[], "record":[]}
-    for record in tqdm(records, "Classifying Images"):
-        label = run_dx_model(dx_model=model, record=os.path.join(input,record), signal="ptb-xl\\testset\\00001_lr.dat",verbose=True)
-        label = int(torch.where(label<0, 0, 1))
-        output = os.path.join("output", record)
-        with open(output+".hea", "w") as f:
-            f.write(f"#Image: {classes[label]}")
-        results_df["label"].append(label)
-        results_df["record"].append(record)
-    results_df = pd.DataFrame(results_df)
-    count = results_df["label"].value_counts().to_dict()
-    print(f"There were {count[0]} Normal and {count[1]} Abnormal Signals detected!")
+    train_dx_model("C:\\Users\\Tizian Dege\\PycharmProjects\\DeTECRohr\\PhysioNet2024\\ptb-xl\\test", model_folder="model", verbose=False)
+    #input = "ptb-xl/records100/00000"
+    #train_dx_model(input, model_folder="model", verbose=False)
+    #classes = {0:"Normal", 1:"Abnormal"}
+    #records = find_records(input)
+    #model = load_dx_model("model", verbose=True)
+    #model.eval()
+    #results_df = {"label":[], "record":[]}
+    #for record in tqdm(records, "Classifying Images"):
+    #    label = run_dx_model(dx_model=model, record=os.path.join(input,record), signal="ptb-xl\\testset\\00001_lr.dat",verbose=True)
+    #    label = int(torch.where(label<0, 0, 1))
+    #    output = os.path.join("output", record)
+    #    with open(output+".hea", "w") as f:
+    #        f.write(f"#Image: {classes[label]}")
+    #    results_df["label"].append(label)
+    #    results_df["record"].append(record)
+    #results_df = pd.DataFrame(results_df)
+    #count = results_df["label"].value_counts().to_dict()
+    #print(f"There were {count[0]} Normal and {count[1]} Abnormal Signals detected!")
     #labels = run_dx_model(dx_model=model, record="ptb-xl\\testset\\00001_lr", signal="ptb-xl\t\estset\\00001_lr.dat", verbose=True)
-"""

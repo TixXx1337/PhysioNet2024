@@ -64,7 +64,7 @@ class Trainer(abc.ABC):
     - Single batch (train_batch/test_batch)
     """
 
-    def __init__(self, model, loss_fn, optimizer, device='cuda', classification_threshold=None):
+    def __init__(self, model, loss_fn, optimizer, device=0, classification_threshold=None):
         """
         Initialize the trainer.
         :param model: Instance of the model to train.
@@ -117,6 +117,11 @@ class Trainer(abc.ABC):
                 test_result = self.test_epoch(dl_test, verbose=verbose, **kw)
                 (loss, acc, TP, TN, FP, FN, out, y) = test_result
                 test_loss += loss
+            #if len(train_loss) > 10:
+            #    last_values = test_loss[-4:]
+            #    if all(last_values[i] < last_values[i + 1] for i in range(3)):
+            #        return FitResult(actual_num_epochs, train_loss, train_acc, test_loss, test_acc)
+
 
             actual_num_epochs += 1
 
