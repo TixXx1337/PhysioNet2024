@@ -22,6 +22,7 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset
 from tqdm import tqdm
+import copy
 import glob
 import torch.nn as nn
 import torch.optim as optim
@@ -72,7 +73,7 @@ class ECG_Multilead_Dataset(Dataset):
     def load_image(self, image):
         """
         Simple Functions that loads the image and reshapes them
-        :param image: PIL opbject
+        :param image: PIL object
         :return: image resized
         """
         image = image.resize((512, 512))
@@ -178,8 +179,8 @@ def train_dx_model(data_folder, model_folder, verbose):
 
     optimizer = optim.Adam(model.parameters(), lr=lr)
     trainer = Ecg12LeadImageNetTrainerBinary(model, loss_fn, optimizer, device)
-    fitResult2 = trainer.fit(train_dl,None, num_epochs=epochs, early_stopping=100, print_every=1)
-    torch.save(model.state_dict(), os.path.join(model_folder,"dx_model.pt"))
+    fitResult = trainer.fit(train_dl,None, num_epochs=epochs, early_stopping=100, print_every=1)
+    torch.save(copy.deepcopy(model.state_dict()), os.path.join(model_folder,"dx_model.pt"))
 
 
 # Load your trained digitization model. This function is *required*. You should edit this function to add your code, but do *not*
@@ -312,6 +313,9 @@ def save_dx_model(model_folder, model, classes):
     d = {'model': model, 'classes': classes}
     filename = os.path.join(model_folder, 'dx_model.sav')
     joblib.dump(d, filename, protocol=0)
+
+
+
 
 
 """
