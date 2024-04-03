@@ -320,9 +320,8 @@ def save_dx_model(model_folder, model, classes):
 
 
 
-if __name__ == '__main__':
-
-    train_dx_model("C:\\Users\\Tizian Dege\\PycharmProjects\\DeTECRohr\\PhysioNet2024\\ptb-xl\\test", model_folder="model", verbose=False)
+#if __name__ == '__main__':
+    #train_dx_model("C:\\Users\\Tizian Dege\\PycharmProjects\\DeTECRohr\\PhysioNet2024\\ptb-xl\\test", model_folder="model", verbose=False)
     #input = "ptb-xl/records100/00000"
     #train_dx_model(input, model_folder="model", verbose=False)
     #classes = {0:"Normal", 1:"Abnormal"}
