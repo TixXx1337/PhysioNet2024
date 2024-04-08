@@ -10,7 +10,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import h5py
 import sys
-from skimage import io, transform
 import torch
 import torch.optim as optim
 import torchvision.transforms as tvtf
@@ -25,8 +24,6 @@ import torch.optim as optim
 from training import Ecg12LeadImageNetTrainerBinary
 from PIL import Image
 from pathlib import Path
-from skimage import data, color
-from skimage.transform import rescale, resize, downscale_local_mean
 import matplotlib.pyplot as plt
 from torchvision.transforms import v2
 import cv2
