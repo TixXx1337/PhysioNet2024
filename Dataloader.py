@@ -17,7 +17,6 @@ import torchvision
 import timeit
 import numpy as np
 import matplotlib.pyplot as plt
-import cv2
 import os
 import torch.nn as nn
 import torch.optim as optim
@@ -26,7 +25,6 @@ from PIL import Image
 from pathlib import Path
 import matplotlib.pyplot as plt
 from torchvision.transforms import v2
-import cv2
 
 
 class ECG_Multilead_Dataset(Dataset):
