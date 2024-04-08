@@ -35,3 +35,4 @@ typing_extensions==4.8.0
 tzdata==2024.1
 urllib3==2.2.1
 wfdb==4.1.2
+h5py
