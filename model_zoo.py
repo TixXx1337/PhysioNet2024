@@ -2,11 +2,11 @@ import torch
 import torch.nn as nn
 import math
 import time
-
 import torch
 import torch.nn as nn
 import math
 import time
+import Dataloader
 
 
 # A simple but versatile d1 convolutional neural net
@@ -87,7 +87,7 @@ class ConvNet2d(nn.Module):
 # A simple but versatile d1 "deconvolution" neural net
 class DeConvNet1d(nn.Module):
     def __init__(self, in_channels: int, hidden_channels: list, out_channels: int, out_kernel: int,
-                 kernel_lengths: list, dropout=None, stride=1, dilation=1, batch_norm=False, output_padding=1):
+                 kernel_lengths: list, dropout=None, stride=2, dilation=1, batch_norm=False, output_padding=1):
         super().__init__()
         assert len(hidden_channels) == len(kernel_lengths)
 
@@ -284,11 +284,11 @@ class Ecg12ImageToSignalNet(nn.Module):
                  deconv_hidden_channels_short: list, deconv_kernel_lengths_short: list,
                  deconv_hidden_channels_long: list, deconv_kernel_lengths_long: list,
                  conv_dropout=None, conv_stride=1, conv_dilation=1, conv_batch_norm=False,
-                 deconv_dropout_short=None, deconv_stride_short=1, deconv_dilation_short=1,
+                 deconv_dropout_short=None, deconv_stride_short=2, deconv_dilation_short=1,
                  deconv_batch_norm_short=False, deconv_out_kernel_short=5,
-                 deconv_dropout_long=None, deconv_stride_long=1, deconv_dilation_long=1,
-                 deconv_batch_norm_long=False, deconv_out_kernel_long=5,
-                 fc_hidden_dims=(), l_out_long=5000, l_out_short=1250, short_leads=12, long_leads=1):
+                 deconv_dropout_long=None, deconv_stride_long=2, deconv_dilation_long=1,
+                 deconv_batch_norm_long=False, deconv_out_kernel_long=5,output_padding=1,
+                 fc_hidden_dims=(), l_out_long=1000, l_out_short=250, short_leads=12, long_leads=1):
         super().__init__()
 
         self.deconv_in_channels = deconv_in_channels
@@ -313,12 +313,12 @@ class Ecg12ImageToSignalNet(nn.Module):
                                         out_channels=short_leads, out_kernel=deconv_out_kernel_short,
                                         kernel_lengths=deconv_kernel_lengths_short,
                                         dropout=deconv_dropout_short, stride=deconv_stride_short,
-                                        dilation=deconv_dilation_short, batch_norm=deconv_batch_norm_short)
+                                        dilation=deconv_dilation_short, batch_norm=deconv_batch_norm_short, output_padding=output_padding)
         self.dcnn1d_long = DeConvNet1d(deconv_in_channels, hidden_channels=deconv_hidden_channels_long,
                                        out_channels=long_leads, out_kernel=deconv_out_kernel_long,
                                        kernel_lengths=deconv_kernel_lengths_long,
                                        dropout=deconv_dropout_long, stride=deconv_stride_long,
-                                       dilation=deconv_dilation_long, batch_norm=deconv_batch_norm_long)
+                                       dilation=deconv_dilation_long, batch_norm=deconv_batch_norm_long, output_padding=output_padding)
 
     def forward(self, x):
         out = self.cnn2d(x)
@@ -330,11 +330,11 @@ class Ecg12ImageToSignalNet(nn.Module):
         latent_short = latent_short.reshape((x.shape[0], self.deconv_in_channels, self.l_in_short))
 
         out_short = self.dcnn1d_short(latent_short)
-        start_short = (out_short.shape[2] - self.l_out_short) // 2
+        #start_short = (out_short.shape[2] - self.l_out_short) // 2
         out_long = self.dcnn1d_long(latent_long)
+        return out_short, out_long
         start_long = (out_long.shape[2] - self.l_out_long) // 2
-        return out_short[:, :, start_short:start_short + self.l_out_short], \
-            out_long[:, :, start_long:start_long + self.l_out_long]
+        return out_short[:, :, start_short:start_short + self.l_out_short], out_long[:, :, start_long:start_long + self.l_out_long]
 
     def num_flat_features(self, x):
         size = x.size()[1:]  # all dimensions except the batch dimension
@@ -349,7 +349,7 @@ class NewNet(nn.Module):
     def __init__(self, in_channels: int, in_h: int, in_w: int,
                  conv_hidden_channels: list, conv_kernel_sizes: list,
                  conv_dropout=None, conv_stride=1, conv_dilation=1, conv_batch_norm=False,
-                 fc_hidden_dims=(), l_out_long=5000, l_out_short=1250, short_leads=12, long_leads=1):
+                 fc_hidden_dims=(), l_out_long=1000, l_out_short=250, short_leads=12, long_leads=1):
         super().__init__()
         self.short_leads = short_leads
         self.long_leads = long_leads
@@ -475,9 +475,41 @@ def calc_out_length(l_in: int, kernel_lengths: list, stride: int, dilation: int,
 
 
 def calc_out_length_deconv(l_in: int, kernel_lengths: list, out_kernel: int, stride: int, dilation: int,
-                           padding=0, output_padding=0):
+                           padding=1, output_padding=0):
     l_out = l_in
     for kernel in kernel_lengths:
         l_out = (l_out - 1) * stride - 2 * padding + dilation * (kernel - 1) + output_padding + 1
     l_out = (l_out - 1) * stride - 2 * padding + dilation * (out_kernel - 1) + 1
     return l_out
+
+
+
+if __name__ == '__main__':
+    hidden_channels = [8, 16, 32, 64, 128]
+    kernel_sizes = [5, 5, 5, 5, 5]
+    deconv_hidden_channels_short = [2,4,8]
+    deconv_kernel_lengths_short = [3] * len(deconv_hidden_channels_short)
+    deconv_hidden_channels_long = [2,4,8,16]
+    deconv_kernel_lengths_long = [5] * len(deconv_hidden_channels_long)
+    ds = Dataloader.ECG_12Lead_Dataset("/home/tdege/DeTECRohr/output")
+
+    device = 0
+    #model = NewNet(in_channels=1, in_h=512, in_w=512,
+    #             conv_hidden_channels= hidden_channels, conv_kernel_sizes=kernel_sizes,
+    #             conv_dropout=None, conv_stride=1, conv_dilation=1, conv_batch_norm=False,
+    #             fc_hidden_dims=(), l_out_long=1000, l_out_short=250, short_leads=12, long_leads=1)
+#
+    model = Ecg12ImageToSignalNet(in_channels=1, deconv_in_channels=len(hidden_channels), in_h=512, in_w=512,
+                 conv_hidden_channels=hidden_channels, conv_kernel_sizes= kernel_sizes,
+                 deconv_hidden_channels_short= deconv_hidden_channels_short, deconv_kernel_lengths_short= deconv_kernel_lengths_short,
+                 deconv_hidden_channels_long= deconv_hidden_channels_long, deconv_kernel_lengths_long= deconv_kernel_lengths_long,
+                 fc_hidden_dims=[128], l_out_long=1000, l_out_short=250, short_leads=12, long_leads=1).to(device)
+
+
+    ds = Dataloader.ECG_12Lead_Dataset("/home/tdege/DeTECRohr/output")
+    images = torch.utils.data.DataLoader(ds, batch_size=32, shuffle=False)
+    image, long, short = next(iter(images))
+    image = image.to(device, dtype=torch.float)
+    image = image.transpose(1,2).transpose(1,3)
+    model.eval()
+    out = model(image)
