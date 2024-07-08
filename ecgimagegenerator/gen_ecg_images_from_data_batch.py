@@ -1,9 +1,7 @@
 import os, sys, argparse
 import random
 import csv
-
 import tqdm
-
 from helper_functions import find_records
 from extract_leads import get_paper_ecg
 from HandwrittenText.generate import get_handwritten
@@ -80,9 +78,9 @@ def get_parser():
 def run(args):
         random.seed(args.seed)
 
-        if os.path.isabs(args.input_directory) == False:
+        if not os.path.isabs(args.input_directory):
             args.input_directory = os.path.normpath(os.path.join(os.getcwd(), args.input_directory))
-        if os.path.isabs(args.output_directory) == False:
+        if not os.path.isabs(args.output_directory):
             original_output_dir = os.path.normpath(os.path.join(os.getcwd(), args.output_directory))
         else:
             original_output_dir = args.output_directory
@@ -90,13 +88,14 @@ def run(args):
         if os.path.exists(args.input_directory) == False or os.path.isdir(args.input_directory) == False:
             raise Exception("The input directory does not exist, Please re-check the input arguments!")
 
-        if os.path.exists(original_output_dir) == False:
+        if not os.path.exists(original_output_dir): #ifn't
             os.makedirs(original_output_dir)
 
         i = 0
         full_header_files, full_recording_files = find_records(args.input_directory, original_output_dir)
-        
-        for full_header_file, full_recording_file in tqdm.tqdm(zip(full_header_files, full_recording_files)):
+
+        tfiles = tqdm.tqdm(zip(full_header_files, full_recording_files), desc='Processing files', total=len(full_header_files))
+        for full_header_file, full_recording_file in tfiles:
             filename = full_recording_file
             header = full_header_file
             args.input_file = os.path.join(args.input_directory, filename)
