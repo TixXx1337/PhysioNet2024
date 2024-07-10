@@ -8,15 +8,16 @@
 # Optional libraries, functions, and variables. You can change or remove them.
 #
 ################################################################################
-
 import joblib
 import numpy as np
 import os
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 import sys
+
+import torch
 
 from helper_code import *
 
+from Trainer.model.model_zoo import Ecg12ImageNet
 ################################################################################
 #
 # Required functions. Edit these functions to add your code, but do not change the arguments of the functions.
@@ -112,11 +113,17 @@ def train_models(data_folder, model_folder, verbose):
 # Load your trained models. This function is *required*. You should edit this function to add your code, but do *not* change the
 # arguments of this function. If you do not train one of the models, then you can return None for the model.
 def load_models(model_folder, verbose):
-    digitization_filename = os.path.join(model_folder, 'digitization_model.sav')
-    digitization_model = joblib.load(digitization_filename)
 
-    classification_filename = os.path.join(model_folder, 'classification_model.sav')
-    classification_model = joblib.load(classification_filename)
+    digitization_model = None
+
+    hidden_channels = [8, 16, 32]
+    kernel_sizes = [3, 3, 5]
+
+    classification_model = Ecg12ImageNet(in_channels=1, hidden_channels=hidden_channels, kernel_sizes=kernel_sizes, in_h=512, in_w=512,
+                          fc_hidden_dims=[128], dropout=None, stride=1, dilation=1, batch_norm=False,
+                          num_of_classes=11).to(dtype=torch.float)
+    digitization_filename = os.path.join(model_folder, 'model_dx.pt')
+    classification_model.load_state_dict(torch.load(digitization_filename))
     return digitization_model, classification_model
 
 # Run your trained digitization model. This function is *required*. You should edit this function to add your code, but do *not*
@@ -125,36 +132,15 @@ def run_models(record, digitization_model, classification_model, verbose):
     # Run the digitization model; if you did not train this model, then you can set signal = None.
 
     # Load the digitization model.
-    model = digitization_model['model']
-
-    # Load the dimensions of the signal.
-    header_file = get_header_file(record)
-    header = load_text(header_file)
-
-    num_samples = get_num_samples(header)
-    num_signals = get_num_signals(header)
-
-    # Extract the features.
-    features = extract_features(record)
-    features = features.reshape(1, -1)
-
-    # Generate "random" waveforms using the a random seed from the features.
-    seed = int(round(model + np.mean(features)))
+    signal = None
     signal = np.random.default_rng(seed=seed).uniform(low=-1, high=1, size=(num_samples, num_signals))
     
     # Run the classification model; if you did not train this model, then you can set labels = None.
 
     # Load the classification model and classes.
-    model = classification_model['model']
-    classes = classification_model['classes']
 
-    # Get the model probabilities.
-    probabilities = model.predict_proba(features)
-    probabilities = np.asarray(probabilities, dtype=np.float32)[:, 0, 1]
+    labels = classification_model(record)
 
-    # Choose the class or classes with the highest probability as the label or labels.
-    max_probability = np.nanmax(probabilities)
-    labels = [classes[i] for i, probability in enumerate(probabilities) if probability == max_probability]
 
     return signal, labels
 
@@ -186,3 +172,8 @@ def save_models(model_folder, digitization_model=None, classification_model=None
         d = {'model': classification_model, 'classes': classes}
         filename = os.path.join(model_folder, 'classification_model.sav')
         joblib.dump(d, filename, protocol=0)
+
+
+if __name__ == '__main__':
+    model_folder = "D:\\PycharmProjects\\CinC_cleaned\\model"
+    digitization_model, classification_model = load_models(model_folder, True)

@@ -383,11 +383,13 @@ class Ecg12LeadImageNetTrainerMulticlass():
     def train(self, num_of_epochs, train_dataloader, val_datloader):
         f1_score = []
         loss = []
+        f1_score_val = []
+        loss_val = []
         for epoch in range(num_of_epochs):
             running_loss_train = 0
             #TP, TN, FP, FN, num_correct = 0,0,0,0,0
             # Train loop
-            progress_bar_train = tqdm(train_dataloader, desc=f'Epoch {epoch + 1}/{num_of_epochs} - Loss: {running_loss:.4f}')
+            progress_bar_train = tqdm(train_dataloader, desc=f'Epoch {epoch + 1}/{num_of_epochs} - Loss: {running_loss_train:.4f}')
             for idx, batch in enumerate(progress_bar_train):
                 batch_result = self._train_batch(batch)
                 running_loss_train += batch_result.loss
@@ -409,10 +411,10 @@ class Ecg12LeadImageNetTrainerMulticlass():
 
 
             #Val loop
-            progress_bar_val = tqdm(val_datloader, desc=f'Val Epoch {epoch + 1}/{num_of_epochs} - Loss: {running_loss:.4f}')
-            running_loss_val = 0.0
-            f1_score_val = []
-            loss_val = []
+
+
+            running_loss_val = 0
+            progress_bar_val = tqdm(val_datloader, desc=f'Val Epoch {epoch + 1}/{num_of_epochs} - Loss: {running_loss_val:.4f}')
             for idx, batch in enumerate(progress_bar_val):
                 batch_result = self._val_batch(batch)
                 running_loss_val += batch_result.loss
@@ -429,7 +431,7 @@ class Ecg12LeadImageNetTrainerMulticlass():
             y_true_val[y_true_val <= 0] = 0
             y_true_val[y_true_val > 0] = 1
             f1_score_val.append(metrics.f1_score(y_true_val, y_pred_val, average='weighted'))
-            loss_val.append(running_loss_val/len(train_dataloader))
+            loss_val.append(avg_loss)
             print(f"Epoch {epoch+1} Val: F1 Score: {f1_score_val[-1]}, Loss: {loss_val[-1]}\n")
         return FitResult(f1_score, loss, f1_score_val, loss_val)
 
@@ -470,13 +472,15 @@ def plot_results(f1_score:List,loss:List, plot_name:str)->None:
     plt.ylabel('F1 Score')
     plt.xlabel('Epoch')
     plt.title('F1 Score')
-    plt.savefig(f'F1_score_{plot_name}.svg', transparent=True)
+    plt.savefig(f'F1_score_{plot_name}.png', transparent=True)
     plt.close()
     plt.plot(range(len(loss)), loss,label='F1_score')
     plt.ylabel('Loss')
     plt.xlabel('Epoch')
     plt.title('Loss')
-    plt.savefig(f'Loss_{plot_name}.svg', transparent=True)
+    plt.savefig(f'Loss_{plot_name}.png', transparent=True)
+    plt.close()
+
 
 
 if __name__ == '__main__':
@@ -485,10 +489,10 @@ if __name__ == '__main__':
     hidden_channels = [8, 16, 32]
     kernel_sizes = [3, 3, 5]
     model = Ecg12ImageNet(in_channels=1, hidden_channels=hidden_channels, kernel_sizes=kernel_sizes, in_h=512, in_w=512,
-                 fc_hidden_dims=[128], dropout=None, stride=1, dilation=1, batch_norm=False, num_of_classes=11).to(device, dtype=torch.float)
+                 fc_hidden_dims=[128], dropout=0.2, stride=1, dilation=1, batch_norm=True, num_of_classes=11).to(device, dtype=torch.float)
     ds = ECGImage_Class_Dataset(path_to_dataset, get_image=True, get_dx=True, get_signal=False)
-    train_split, val_split = math.floor(len(ds)*0.8), math.floor(len(ds)*0.2)
-    ds_train, dl_val = torch.utils.data.random_split(ds, [4, 1])
+    ds_train, dl_val, _ = torch.utils.data.random_split(ds, [0.8,0.2])
+    del ds
     dl_train = torch.utils.data.DataLoader(ds_train, batch_size=1, shuffle=True)
     dl_val = torch.utils.data.DataLoader(dl_val, batch_size=1, shuffle=True)
     optimizer = optim.Adam(model.parameters(), lr=0.001)
@@ -497,10 +501,10 @@ if __name__ == '__main__':
     #x = x.transpose(1, 2).transpose(1, 3).to(device, dtype=torch.float)
     #y = y.to(device, dtype=torch.float)
     trainer = Ecg12LeadImageNetTrainerMulticlass(model=model, optimizer=optimizer, loss_fn=loss_fn,device=device)
-    f1_score, loss, f1_score_val, loss_val = trainer.train(num_of_epochs=5, train_dataloader=dl_train, val_datloader=dl_val)
+    f1_score, loss, f1_score_val, loss_val = trainer.train(num_of_epochs=15, train_dataloader=dl_train, val_datloader=dl_val)
     torch.save(model.state_dict(), "model_dx_all.pt")
     plot_results(f1_score, loss, "train")
-    plot_results(f1_score, loss, "val")
+    plot_results(f1_score_val, loss_val, "val")
     #fit_result = trainer.fit(dl, dl, num_epochs=10)
 
 
