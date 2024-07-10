@@ -18,6 +18,10 @@ import torch
 from helper_code import *
 
 from Trainer.model.model_zoo import Ecg12ImageNet
+
+classes = {'NORM': 0, 'STTC': 1, 'PAC': 2, 'Old MI': 3, 'HYP': 4, 'TACHY': 5, 'CD': 6, 'BRADY': 7, 'AFIB/AFL': 8, 'PVC': 9, 'Acute MI': 10}
+class_dict = {v: k for k, v in classes.items()}
+
 ################################################################################
 #
 # Required functions. Edit these functions to add your code, but do not change the arguments of the functions.
@@ -56,14 +60,14 @@ def train_models(data_folder, model_folder, verbose):
     for i in range(num_records):
         if verbose:
             width = len(str(num_records))
-            print(f'- {i+1:>{width}}/{num_records}: {records[i]}...')
+            print(f'- {i + 1:>{width}}/{num_records}: {records[i]}...')
 
         record = os.path.join(data_folder, records[i])
 
         # Extract the features from the image; this simple example uses the same features for the digitization and classification
         # tasks.
         features = extract_features(record)
-        
+
         digitization_features.append(features)
 
         # Some images may not be labeled...
@@ -85,20 +89,21 @@ def train_models(data_folder, model_folder, verbose):
     digitization_model = np.mean(features)
 
     # Train the classification model. If you are not training a classification model, then you can remove this part of the code.
-    
+
     # This very simple model trains a random forest model with these very simple features.
     classification_features = np.vstack(classification_features)
     classes = sorted(set.union(*map(set, classification_labels)))
     classification_labels = compute_one_hot_encoding(classification_labels, classes)
 
     # Define parameters for random forest classifier and regressor.
-    n_estimators   = 12  # Number of trees in the forest.
+    n_estimators = 12  # Number of trees in the forest.
     max_leaf_nodes = 34  # Maximum number of leaf nodes in each tree.
-    random_state   = 56  # Random state; set for reproducibility.
+    random_state = 56  # Random state; set for reproducibility.
 
     # Fit the model.
     classification_model = RandomForestClassifier(
-        n_estimators=n_estimators, max_leaf_nodes=max_leaf_nodes, random_state=random_state).fit(classification_features, classification_labels)
+        n_estimators=n_estimators, max_leaf_nodes=max_leaf_nodes, random_state=random_state).fit(
+        classification_features, classification_labels)
 
     # Create a folder for the models if it does not already exist.
     os.makedirs(model_folder, exist_ok=True)
@@ -110,45 +115,56 @@ def train_models(data_folder, model_folder, verbose):
         print('Done.')
         print()
 
+
 # Load your trained models. This function is *required*. You should edit this function to add your code, but do *not* change the
 # arguments of this function. If you do not train one of the models, then you can return None for the model.
 def load_models(model_folder, verbose):
-
     digitization_model = None
 
     hidden_channels = [8, 16, 32]
     kernel_sizes = [3, 3, 5]
 
-    classification_model = Ecg12ImageNet(in_channels=1, hidden_channels=hidden_channels, kernel_sizes=kernel_sizes, in_h=512, in_w=512,
-                          fc_hidden_dims=[128], dropout=None, stride=1, dilation=1, batch_norm=False,
-                          num_of_classes=11).to(dtype=torch.float)
+    classification_model = Ecg12ImageNet(in_channels=1, hidden_channels=hidden_channels, kernel_sizes=kernel_sizes,
+                                         in_h=512, in_w=512,
+                                         fc_hidden_dims=[128], dropout=None, stride=1, dilation=1, batch_norm=False,
+                                         num_of_classes=11).to(dtype=torch.float)
     digitization_filename = os.path.join(model_folder, 'model_dx.pt')
     classification_model.load_state_dict(torch.load(digitization_filename))
     return digitization_model, classification_model
+
 
 # Run your trained digitization model. This function is *required*. You should edit this function to add your code, but do *not*
 # change the arguments of this function. If you did not train one of the models, then you can return None for the model.
 def run_models(record, digitization_model, classification_model, verbose):
     # Run the digitization model; if you did not train this model, then you can set signal = None.
 
-    # Load the digitization model.
-    signal = None
-    signal = np.random.default_rng(seed=seed).uniform(low=-1, high=1, size=(num_samples, num_signals))
-    
-    # Run the classification model; if you did not train this model, then you can set labels = None.
-
-    # Load the classification model and classes.
-
-    labels = classification_model(record)
-
-
+    signal =None
+    image = load_images(record)[0]
+    image = image.convert('L')
+    image = image.resize((512, 512))
+    image = np.array(image).reshape(1,512,512,1)
+    image = torch.tensor(image).transpose(1,2).transpose(1,3)
+    image = image.to(torch.float)
+    out = classification_model(image)
+    out = torch.clamp(out, 0, 1)
+    labels = tensor_to_labels(out)
     return signal, labels
+
 
 ################################################################################
 #
 # Optional functions. You can change or remove these functions and/or add new functions.
 #
 ################################################################################
+
+def tensor_to_labels(tensor):
+    tensor = tensor.detach().squeeze().numpy()  # Remove batch dimension and convert to numpy array
+    labels = []
+    for i, value in enumerate(tensor):
+        if value == 1:
+            labels.append(class_dict[i])
+    return labels
+
 
 # Extract features.
 def extract_features(record):
@@ -160,6 +176,7 @@ def extract_features(record):
         mean += np.mean(image)
         std += np.std(image)
     return np.array([mean, std])
+
 
 # Save your trained models.
 def save_models(model_folder, digitization_model=None, classification_model=None, classes=None):
@@ -174,6 +191,3 @@ def save_models(model_folder, digitization_model=None, classification_model=None
         joblib.dump(d, filename, protocol=0)
 
 
-if __name__ == '__main__':
-    model_folder = "D:\\PycharmProjects\\CinC_cleaned\\model"
-    digitization_model, classification_model = load_models(model_folder, True)
