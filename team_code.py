@@ -146,7 +146,7 @@ def run_models(record, digitization_model, classification_model, verbose):
     image = torch.tensor(image).transpose(1,2).transpose(1,3)
     image = image.to(torch.float)
     out = classification_model(image)
-    out = torch.clamp(out, 0, 1)
+    out = torch.clamp(out, 0, 1).detach()
     labels = tensor_to_labels(out)
     return signal, labels
 
@@ -158,7 +158,7 @@ def run_models(record, digitization_model, classification_model, verbose):
 ################################################################################
 
 def tensor_to_labels(tensor):
-    tensor = tensor.detach().squeeze().numpy()  # Remove batch dimension and convert to numpy array
+    tensor = tensor.squeeze().numpy()  # Remove batch dimension and convert to numpy array
     labels = []
     for i, value in enumerate(tensor):
         if value == 1:
@@ -191,3 +191,11 @@ def save_models(model_folder, digitization_model=None, classification_model=None
         joblib.dump(d, filename, protocol=0)
 
 
+if __name__ == '__main__':
+    model_folder = "C:\\Users\\Tizian Dege\\PycharmProjects\\CinC_cleaned\\model"
+    data_folder = "C:\\Users\\Tizian Dege\\PycharmProjects\\CinC_cleaned/Datahandling/Train/20images/"
+    record = 'C:\\Users\\Tizian Dege\\PycharmProjects\\CinC_cleaned/Datahandling/Train/20images/00001_lr'
+    digitization_model, classification_model = load_models(model_folder, True)
+    classification_model.eval()
+    #records = find_records(data_folder)
+    signal, labels = run_models(record, digitization_model, classification_model, True)
