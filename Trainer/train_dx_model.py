@@ -1,7 +1,9 @@
 import abc
+import copy
 import math
 import os
 import sys
+import pandas as pd
 from tqdm import tqdm
 import torch
 from typing import NamedTuple, List
@@ -19,6 +21,10 @@ import torch.optim as optim
 import numpy as np
 import sklearn.metrics as metrics
 import matplotlib.pyplot as plt
+import pandas as pd
+import vit_pytorch
+from vit_pytorch.deepvit import DeepViT
+from vit_pytorch.cvt import CvT
 
 
 
@@ -375,9 +381,9 @@ class Ecg12LeadImageNetTrainerBinary(Trainer):
 
 class Ecg12LeadImageNetTrainerMulticlass():
     def __init__(self, model, optimizer, loss_fn, device="cpu"):
-        self.model = model
+        self.model = model.to(device,dtype=torch.float)
+        self.loss_fn = loss_fn.to(device,dtype=torch.float)
         self.optimizer = optimizer
-        self.loss_fn = loss_fn
         self.device = device
 
     def train(self, num_of_epochs, train_dataloader, val_datloader):
@@ -385,6 +391,7 @@ class Ecg12LeadImageNetTrainerMulticlass():
         loss = []
         f1_score_val = []
         loss_val = []
+        m = torch.nn.Sigmoid()
         for epoch in range(num_of_epochs):
             running_loss_train = 0
             #TP, TN, FP, FN, num_correct = 0,0,0,0,0
@@ -395,17 +402,20 @@ class Ecg12LeadImageNetTrainerMulticlass():
                 running_loss_train += batch_result.loss
                 avg_loss = running_loss_train / (idx + 1)
                 progress_bar_train.set_description(f'Train Epoch {epoch + 1}/{num_of_epochs} - Loss: {avg_loss:.4f}')
-                if idx==0:
-                    y_pred_train = batch_result.out.detach().cpu().numpy()
-                    y_true_train = batch_result.y.detach().cpu().numpy()
-                else:
-                    y_pred_train = np.vstack([y_pred_train, batch_result.out.detach().cpu().numpy()])
-                    y_true_train = np.vstack([y_true_train, batch_result.y.detach().cpu().numpy()])
-            y_pred_train[y_pred_train <= 0] = 0
-            y_pred_train[y_pred_train > 0] = 1
-            y_true_train[y_true_train <= 0] = 0
-            y_true_train[y_true_train > 0] = 1
-            f1_score.append(metrics.f1_score(y_true_train, y_pred_train, average='weighted'))
+                for i in range(batch_result.out.shape[0]):
+                    y_pred = m(batch_result.out[i])
+                    y_true = batch_result.y[i]
+                    max_value = float(y_pred.max()) if y_pred.max() < 0.5 else 0.5
+                    y_pred[y_pred >= max_value] = 1
+                    y_pred[y_pred < max_value] = 0
+                    if idx==0 and i==0:
+                        y_pred_train = y_pred.detach().cpu().numpy()
+                        y_true_train = y_true.detach().cpu().numpy()
+                    else:
+                        y_pred_train = np.vstack([y_pred_train, y_pred.detach().cpu().numpy()])
+                        y_true_train = np.vstack([y_true_train, y_true.detach().cpu().numpy()])
+
+            f1_score.append(metrics.f1_score(y_true_train, y_pred_train, average='micro'))
             loss.append(running_loss_train/len(train_dataloader))
             print(f"Epoch {epoch+1} Train: F1 Score: {f1_score[-1]}, Loss: {loss[-1]}\n")
 
@@ -420,17 +430,19 @@ class Ecg12LeadImageNetTrainerMulticlass():
                 running_loss_val += batch_result.loss
                 avg_loss = running_loss_val / (idx + 1)
                 progress_bar_val.set_description(f'Epoch {epoch + 1}/{num_of_epochs} - Loss: {avg_loss:.4f}')
-                if idx==0:
-                    y_pred_val = batch_result.out.detach().cpu().numpy()
-                    y_true_val = batch_result.y.detach().cpu().numpy()
-                else:
-                    y_pred_val = np.vstack([y_pred_val, batch_result.out.detach().cpu().numpy()])
-                    y_true_val = np.vstack([y_true_val, batch_result.y.detach().cpu().numpy()])
-            y_pred_val[y_pred_val <= 0] = 0
-            y_pred_val[y_pred_val > 0] = 1
-            y_true_val[y_true_val <= 0] = 0
-            y_true_val[y_true_val > 0] = 1
-            f1_score_val.append(metrics.f1_score(y_true_val, y_pred_val, average='weighted'))
+                for i in range(batch_result.out.shape[0]):
+                    y_pred = m(batch_result.out[i])
+                    y_true = batch_result.y[i]
+                    max_value = float(y_pred.max()) if y_pred.max() < 0.5 else 0.5
+                    y_pred[y_pred >= max_value] = 1
+                    y_pred[y_pred < max_value] = 0
+                    if idx==0 and i==0:
+                        y_pred_val = y_pred.detach().cpu().numpy()
+                        y_true_val = y_true.detach().cpu().numpy()
+                    else:
+                        y_pred_val = np.vstack([y_pred_val, y_pred.detach().cpu().numpy()])
+                        y_true_val = np.vstack([y_true_val, y_true.detach().cpu().numpy()])
+            f1_score_val.append(metrics.f1_score(y_true_val, y_pred_val, average='micro'))
             loss_val.append(avg_loss)
             print(f"Epoch {epoch+1} Val: F1 Score: {f1_score_val[-1]}, Loss: {loss_val[-1]}\n")
         return FitResult(f1_score, loss, f1_score_val, loss_val)
@@ -467,44 +479,114 @@ class Ecg12LeadImageNetTrainerMulticlass():
         return BatchResult(loss.item(), num_correct, TP, TN, FP, FN, out, y)
 
 
-def plot_results(f1_score:List,loss:List, plot_name:str)->None:
+def plot_results(f1_score:List,loss:List, plot_name:str, output_path:str=None)->None:
     plt.plot(range(len(f1_score)), f1_score,label='F1_score')
     plt.ylabel('F1 Score')
     plt.xlabel('Epoch')
     plt.title('F1 Score')
-    plt.savefig(f'F1_score_{plot_name}.png', transparent=True)
+    plt.savefig(f'{output_path}/F1_score_{plot_name}.png', transparent=True)
     plt.close()
     plt.plot(range(len(loss)), loss,label='F1_score')
     plt.ylabel('Loss')
     plt.xlabel('Epoch')
     plt.title('Loss')
-    plt.savefig(f'Loss_{plot_name}.png', transparent=True)
+    plt.savefig(f'{output_path}/Loss_{plot_name}.png')
     plt.close()
 
+
+def get_models():
+    hidden_channels = [8, 16, 32]
+    kernel_sizes = [3, 3, 5]
+    model_cnn = Ecg12ImageNet(in_channels=1, hidden_channels=hidden_channels, kernel_sizes=kernel_sizes, in_h=512,
+                              in_w=512,
+                              fc_hidden_dims=[128], dropout=0.2, stride=1, dilation=1, batch_norm=True,
+                              num_of_classes=11)
+    model_vit = vit_pytorch.ViT(
+        image_size=512,
+        patch_size=32,
+        num_classes=11,
+        dim=1024,
+        depth=6,
+        heads=16,
+        mlp_dim=2048,
+        dropout=0.1,
+        emb_dropout=0.1,
+        channels=1
+    )
+    model_deepvit = DeepViT(
+        image_size=512,
+        patch_size=32,
+        num_classes=11,
+        dim=1024,
+        depth=6,
+        heads=16,
+        mlp_dim=2048,
+        dropout=0.1,
+        emb_dropout=0.1,
+        channels=1
+    )
+    model_cct = CvT(
+        num_classes=11,
+        s1_emb_dim=64,  # stage 1 - dimension
+        s1_emb_kernel=7,  # stage 1 - conv kernel
+        s1_emb_stride=4,  # stage 1 - conv stride
+        s1_proj_kernel=3,  # stage 1 - attention ds-conv kernel size
+        s1_kv_proj_stride=2,  # stage 1 - attention key / value projection stride
+        s1_heads=1,  # stage 1 - heads
+        s1_depth=1,  # stage 1 - depth
+        s1_mlp_mult=4,  # stage 1 - feedforward expansion factor
+        s2_emb_dim=192,  # stage 2 - (same as above)
+        s2_emb_kernel=3,
+        s2_emb_stride=2,
+        s2_proj_kernel=3,
+        s2_kv_proj_stride=2,
+        s2_heads=3,
+        s2_depth=2,
+        s2_mlp_mult=4,
+        s3_emb_dim=384,  # stage 3 - (same as above)
+        s3_emb_kernel=3,
+        s3_emb_stride=2,
+        s3_proj_kernel=3,
+        s3_kv_proj_stride=2,
+        s3_heads=4,
+        s3_depth=10,
+        s3_mlp_mult=4,
+        channels=1,
+        dropout=0.
+    )
+    return [model_cnn, model_vit, model_deepvit, model_cct]
 
 
 if __name__ == '__main__':
     device = 0
     path_to_dataset = ["/work/scratch/td38heni/all"]
-    hidden_channels = [8, 16, 32]
-    kernel_sizes = [3, 3, 5]
-    model = Ecg12ImageNet(in_channels=1, hidden_channels=hidden_channels, kernel_sizes=kernel_sizes, in_h=512, in_w=512,
-                 fc_hidden_dims=[128], dropout=0.2, stride=1, dilation=1, batch_norm=True, num_of_classes=11).to(device, dtype=torch.float)
-    ds = ECGImage_Class_Dataset(path_to_dataset, get_image=True, get_dx=True, get_signal=False)
-    ds_train, dl_val, _ = torch.utils.data.random_split(ds, [0.8,0.2])
+    #path_to_dataset = ["/work/home/td38heni/CinC_cleaned/Datahandling/test_data"] #testing server
+    #path_to_dataset = [r"C:\Users\Tizian Dege\PycharmProjects\CinC_cleaned\Datahandling\Train\test_data"] #testing me
+    num_of_samples=10000 #add config file for runs
+    num_of_epochs=40
+    batch_size=16
+    #path = Path().resolve()
+    path = "/work/scratch/td38heni/CinC_cleaned"
+    ds = ECGImage_Class_Dataset(path_to_dataset, get_image=True, get_dx=True, get_signal=False, samples=num_of_samples, use_single_class=True)
+    ds_train, dl_val = torch.utils.data.random_split(ds, [0.8,0.2])
     del ds
-    dl_train = torch.utils.data.DataLoader(ds_train, batch_size=1, shuffle=True)
-    dl_val = torch.utils.data.DataLoader(dl_val, batch_size=1, shuffle=True)
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
-    loss_fn = nn.BCEWithLogitsLoss().to(device, dtype=torch.float)
-    #x,y = next(iter(dl))
-    #x = x.transpose(1, 2).transpose(1, 3).to(device, dtype=torch.float)
-    #y = y.to(device, dtype=torch.float)
-    trainer = Ecg12LeadImageNetTrainerMulticlass(model=model, optimizer=optimizer, loss_fn=loss_fn,device=device)
-    f1_score, loss, f1_score_val, loss_val = trainer.train(num_of_epochs=15, train_dataloader=dl_train, val_datloader=dl_val)
-    torch.save(model.state_dict(), "model_dx_all.pt")
-    plot_results(f1_score, loss, "train")
-    plot_results(f1_score_val, loss_val, "val")
-    #fit_result = trainer.fit(dl, dl, num_epochs=10)
+    df = []
+    dl_train = torch.utils.data.DataLoader(ds_train, batch_size=batch_size, shuffle=True)
+    dl_val = torch.utils.data.DataLoader(dl_val, batch_size=batch_size, shuffle=True)
+    model_name = ["CNN", "ViT", "DeepViT", "CvT"]
+    models = get_models()
+    for name, model in zip([model_name[-1]], [models[-1]]):
+        os.makedirs(f"{path}/{name}")
+        optimizer = optim.Adam(model.parameters(), lr=0.001)
+        loss_fn = nn.CrossEntropyLoss()
+        trainer = Ecg12LeadImageNetTrainerMulticlass(model=model, optimizer=optimizer, loss_fn=loss_fn,device=device)
+        train_result = trainer.train(num_of_epochs=num_of_epochs, train_dataloader=dl_train, val_datloader=dl_val)
+        model_dict = copy.deepcopy(model.state_dict())
+        torch.save(model_dict, f'{path}/{name}/model_dx_{name}.pt')
+        plot_results(train_result.f1_score, train_result.loss, "model_dx_val", output_path=f"{path}/{name}")
+        plot_results(train_result.f1_score_val, train_result.loss_val, "model_dx_val", output_path=f"{path}/{name}")
+        df = pd.DataFrame(train_result._asdict())
+        df.to_csv(f'{path}/{name}/train_result.csv')
+
 
 
