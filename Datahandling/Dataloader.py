@@ -88,7 +88,7 @@ class ECG_12Lead_Dataset(Dataset):
 
 class ECGImage_Class_Dataset(Dataset):
     def __init__(self, path_to_dataset:list=None, transform=None, verbose:bool=False,
-                 get_image:bool=True, get_dx:bool=True, get_signal:bool=False, samples:int=None):
+                 get_image:bool=True, get_dx:bool=True, get_signal:bool=False, samples:int=None, use_single_class:bool=False):
         super().__init__()
         self.data = None
         self.data_debug = []
@@ -159,6 +159,7 @@ class ECGImage_Class_Dataset(Dataset):
             dxs = [0] * len(self.classes)
             for dx in self.data.iloc[idx]["dx"]:
                 dxs[self.classes[dx]] = 1
+                break
             dxs = np.array(dxs)
         return image, dxs, signal
 
