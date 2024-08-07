@@ -19,10 +19,15 @@ class CustomParser:
 
 
 class DataManager:
-    def __init__(self, input_path:List[str],output_path:str, ptbxl_database_file:str="C:\\Users\\Tizian Dege\\PycharmProjects\DeTECRohr/ptb-xl/ptbxl_database.csv",
+    def __init__(self, input_path:List[str],output_path:str, ptbxl_database_file:str=r"C:\\Users\\Tizian Dege\\PycharmProjects\DeTECRohr/ptb-xl/ptbxl_database.csv",
                  ptbxl_mapping_file:str="C:\\Users\\Tizian Dege\\PycharmProjects\\DeTECRohr/ptb-xl/scp_statements.csv",
                  sl_database_file:str="C:\\Users\\Tizian Dege\\PycharmProjects\DeTECRohr/ptb-xl/12sl_statements.csv",
                  sl_mapping_file:str="C:\\Users\\Tizian Dege\\PycharmProjects\DeTECRohr/ptb-xl/12slv23ToSNOMED.csv",**kwargs):
+
+        if os.path.isdir(output_path):
+            raise Exception("Output Folder already exists")
+        else:
+            os.makedirs(output_path)
 
         for input_dir in input_path:
             args = CustomParser()
@@ -56,17 +61,24 @@ class DataManager:
 
 
 if __name__ == '__main__':
-    data = glob("ptb-xl/records100/*") + glob("Data/ptb-xl/records500/*")
-    #data = data[0]
+    data = glob("ptb-xl/records100/*") + glob("ptb-xl/records500/*")
+    data = data[:4]
     path = Path().resolve()
     ptbxl_mapping_file = f"{path}/ptb-xl/scp_statements.csv"
     sl_database_file = f"{path}/ptb-xl/12sl_statements.csv"
     sl_mapping_file = f"{path}/ptb-xl/12slv23ToSNOMED.csv"
     ptbxl_database_file = f"{path}/ptb-xl/ptbxl_database.csv"
-    datamanager =DataManager(input_path=data, output_path=f"{path}/Train/test_data",
-                            ptbxl_mapping_file=ptbxl_mapping_file, sl_database_file=sl_database_file,
-                             sl_mapping_file =sl_mapping_file,ptbxl_database_file=ptbxl_database_file,
-                            seed=2, bbox=True, rotate=45, random_add_header=0.5, augment=True,
-                            random_resolution=True, resolution=250,pad_inches=2, random_padding=True,calibration_pulse=0.2, random_bw=0.2,store_config=2,
-                            lead_bbox=True, random_grid_present=1, lead_name_bbox=True)
+    #datamanager =DataManager(input_path=data, output_path=f"{path}/fine_tune/train_set",
+    #                        ptbxl_mapping_file=ptbxl_mapping_file, sl_database_file=sl_database_file,
+    #                        sl_mapping_file =sl_mapping_file,ptbxl_database_file=ptbxl_database_file,
+    #                        seed=2, bbox=True, rotate=45, random_add_header=0.5, augment=True,
+    #                        random_resolution=True, resolution=250,pad_inches=2, random_padding=True,calibration_pulse=0.2, random_bw=0.2,store_config=2,
+    #                        lead_bbox=True, random_grid_present=1, lead_name_bbox=True)
+    datamanager = DataManager(input_path=data, output_path=f"{path}/fine_tune/train_set",
+                              ptbxl_mapping_file=ptbxl_mapping_file, sl_database_file=sl_database_file,
+                              sl_mapping_file=sl_mapping_file, ptbxl_database_file=ptbxl_database_file,
+                              seed=2, bbox=True, rotate=45, random_add_header=0.2, augment=False,
+                              random_resolution=True, resolution=250, pad_inches=2, random_padding=True,
+                              calibration_pulse=0.2, random_bw=0.2, store_config=2,
+                              lead_bbox=True, random_grid_present=1, lead_name_bbox=True)
 
