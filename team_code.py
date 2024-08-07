@@ -87,7 +87,7 @@ def load_models(model_folder, verbose):
 # change the arguments of this function. If you did not train one of the models, then you can return None for the model.
 def run_models(record, digitization_model, classification_model, verbose):
     # Run the digitization model; if you did not train this model, then you can set signal = None.
-    path_to_yolo =  os.path.join(os.getcwd(),"YOLO", 'LEAD_detector.pt')
+    path_to_yolo = os.path.join(os.getcwd(),"model","YOLO", 'LEAD_detector.pt')
     yolo = YOLO(path_to_yolo)
     signal = None
     path = os.path.split(record)[0]
