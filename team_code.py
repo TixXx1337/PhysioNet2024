@@ -12,15 +12,21 @@ import joblib
 import numpy as np
 import os
 import sys
-
+import cv2
 import torch
+
 
 from helper_code import *
 
-from Trainer.model.model_zoo import Ecg12ImageNet
+from Trainer.model import ECG_Dx
 
-classes = {'NORM': 0, 'STTC': 1, 'PAC': 2, 'Old MI': 3, 'HYP': 4, 'TACHY': 5, 'CD': 6, 'BRADY': 7, 'AFIB/AFL': 8, 'PVC': 9, 'Acute MI': 10}
+from ultralytics import YOLO
+
+#classes = {'NORM': 0, 'STTC': 1, 'PAC': 2, 'Old MI': 3, 'HYP': 4, 'TACHY': 5, 'CD': 6, 'BRADY': 7, 'AFIB/AFL': 8, 'PVC': 9, 'Acute MI': 10}
+classes = {'NORM': 0, 'STTC': 1, 'Old MI': 2, 'HYP': 3, 'TACHY': 4, 'CD': 5, 'AFIB/AFL': 6, 'PVC': 7, 'Acute MI': 8}
 class_dict = {v: k for k, v in classes.items()}
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 ################################################################################
 #
@@ -121,13 +127,8 @@ def train_models(data_folder, model_folder, verbose):
 def load_models(model_folder, verbose):
     digitization_model = None
 
-    hidden_channels = [8, 16, 32]
-    kernel_sizes = [3, 3, 5]
 
-    classification_model = Ecg12ImageNet(in_channels=1, hidden_channels=hidden_channels, kernel_sizes=kernel_sizes,
-                                         in_h=512, in_w=512,
-                                         fc_hidden_dims=[128], dropout=None, stride=1, dilation=1, batch_norm=False,
-                                         num_of_classes=11).to(dtype=torch.float)
+    classification_model = ECG_Dx.get_model("ViT", 9)
     digitization_filename = os.path.join(model_folder, 'model_dx.pt')
     classification_model.load_state_dict(torch.load(digitization_filename))
     return digitization_model, classification_model
@@ -137,17 +138,24 @@ def load_models(model_folder, verbose):
 # change the arguments of this function. If you did not train one of the models, then you can return None for the model.
 def run_models(record, digitization_model, classification_model, verbose):
     # Run the digitization model; if you did not train this model, then you can set signal = None.
+    path_to_yolo =  os.path.join(os.getcwd(),"YOLO", 'LEAD_detector.pt')
+    yolo = YOLO(path_to_yolo)
+    signal = None
+    path = os.path.split(record)[0]
+    image_files = get_image_files(record)
+    path_to_img = os.path.join(path, image_files[0])
+    result = yolo(path_to_img)
+    short_leads_sorted, long_lead = sort_leads(result[0].cpu())
+    image = cv2.imread(path_to_img)
 
-    signal =None
-    image = load_images(record)[0]
-    image = image.convert('L')
-    image = image.resize((512, 512))
-    image = np.array(image).reshape(1,512,512,1)
-    image = torch.tensor(image).transpose(1,2).transpose(1,3)
-    image = image.to(torch.float)
-    out = classification_model(image)
-    out = torch.clamp(out, 0, 1).detach()
-    labels = tensor_to_labels(out)
+    # gaussian blur for denoising
+    image = cv2.GaussianBlur(image, (3, 3), 100)
+    images = get_cropped_images(image, short_leads_sorted, long_lead)
+    images = torch.tensor(images)
+    images = images.reshape(1, *images.shape).to(device ,dtype=torch.float32)
+    out = classification_model(images)
+    max_index = torch.argmax(out).item()
+    labels = class_dict[max_index]
     return signal, labels
 
 
@@ -156,6 +164,67 @@ def run_models(record, digitization_model, classification_model, verbose):
 # Optional functions. You can change or remove these functions and/or add new functions.
 #
 ################################################################################
+
+
+def get_cropped_images(image, short_leads, long_lead, target_size=(128,128)):
+    imgs = []
+    for short_lead_sorted in short_leads:
+        _,x, y, w, h = short_lead_sorted
+        x, y = int(x - w / 2), int(y - h / 2)
+        image_height, image_width = image.shape[:2]
+        x = max(x, 0)
+        y = max(y, 0)
+        x_end = int(min(x + w, image_width))
+        y_end = int(min(y + h, image_height))
+        cropped_image = image[y:y_end, x:x_end]
+        cropped_image = cv2.resize(cropped_image, target_size, interpolation=cv2.INTER_LINEAR)
+        imgs.append(cropped_image.transpose(2,0,1)/255)
+    _, x, y, w, h = long_lead.T
+    x, y = int(x - w / 2), int(y - h / 2)
+    image_height, image_width = image.shape[:2]
+    x = max(x, 0)
+    y = max(y, 0)
+    x_end = int(min(x + w, image_width))
+    y_end = int(min(y + h, image_height))
+    cropped_image = image[y:y_end, x:x_end]
+    cropped_image = cv2.resize(cropped_image, target_size, interpolation=cv2.INTER_LINEAR)
+    imgs.append(cropped_image.transpose(2,0,1)/255)
+    return np.array(imgs)
+
+
+
+def sort_leads(result: torch.tensor):
+    bboxes = np.concatenate((result.boxes.cls.reshape(result.boxes.cls.shape[0], 1), result.boxes.xywh), axis=1)
+    try:
+        short_leads = bboxes[bboxes[:, 0] == 0]
+    except:
+        print("No short lead Detected use whole imeage instead")
+        short_leads = 0, result.orig_shape[0] / 2, result.orig_shape[1] / 2, result.orig_shape[0], result.orig_shape[1] / 2  # use whole image
+        short_leads = np.array([short_leads])
+    if len(short_leads) != 12:
+        short_leads = augment_data(short_leads) #fixes wrong predictions
+    sorted_by_x = np.array(sorted(short_leads, key=lambda lead: lead[1]))
+    chunks = np.array_split(sorted_by_x, len(sorted_by_x) // 3)
+    sorted_chunks = [chunk[chunk[:, 2].argsort()] for chunk in chunks]
+    sorted_by_x = np.vstack(sorted_chunks)
+    try:
+        long_leads = bboxes[bboxes[:, 0] == 1][0]
+    except:
+        print("No long lead Detected use whole imeage instead")
+        long_leads = 1,result.orig_shape[0]/2, result.orig_shape[1]/2, result.orig_shape[0], result.orig_shape[1]/2 #use whole image
+        long_leads = np.array(long_leads)
+    return sorted_by_x, long_leads
+
+def augment_data(short_leads):
+    if len(short_leads) > 12:
+        return short_leads[:12]
+    additional_rows_needed = 12 - len(short_leads)
+    random_indices = np.random.choice(len(short_leads), additional_rows_needed, replace=True)
+    additional_rows = short_leads[random_indices]
+    return np.vstack((short_leads, additional_rows))
+
+
+
 
 def tensor_to_labels(tensor):
     tensor = tensor.squeeze().numpy()  # Remove batch dimension and convert to numpy array
@@ -192,10 +261,10 @@ def save_models(model_folder, digitization_model=None, classification_model=None
 
 
 if __name__ == '__main__':
-    model_folder = "C:\\Users\\Tizian Dege\\PycharmProjects\\CinC_cleaned\\model"
-    data_folder = "C:\\Users\\Tizian Dege\\PycharmProjects\\CinC_cleaned/Datahandling/Train/20images/"
-    record = 'C:\\Users\\Tizian Dege\\PycharmProjects\\CinC_cleaned/Datahandling/Train/20images/00001_lr'
+    model_folder = "/home/tdege/CinC_cleaned/model"
+    data_folder = "/home/tdege/CinC_cleaned/Datahandling/20images/"
+    record = '/home/tdege/CinC_cleaned/Datahandling/20images/00001_lr'
     digitization_model, classification_model = load_models(model_folder, True)
     classification_model.eval()
-    #records = find_records(data_folder)
-    signal, labels = run_models(record, digitization_model, classification_model, True)
+    records = find_records(data_folder)
+    #signal, labels = run_models(record, digitization_model, classification_model, True)
