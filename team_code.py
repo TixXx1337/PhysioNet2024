@@ -105,7 +105,7 @@ def run_models(record, digitization_model, classification_model, verbose):
     out = classification_model(images)
     max_index = torch.argmax(out).item()
     labels = class_dict[max_index]
-    return signal, labels
+    return signal, [labels]
 
 
 ################################################################################
