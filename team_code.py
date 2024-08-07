@@ -13,15 +13,14 @@ import numpy as np
 import os
 import sys
 import cv2
-import torch
-
-
+from PIL import ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 from helper_code import *
-
 from Trainer.model import ECG_Dx
-
+from Trainer.train_dx_model import *
+from Datahandling.Dataloader_withYOLO import *
 from ultralytics import YOLO
-
+import torch
 #classes = {'NORM': 0, 'STTC': 1, 'PAC': 2, 'Old MI': 3, 'HYP': 4, 'TACHY': 5, 'CD': 6, 'BRADY': 7, 'AFIB/AFL': 8, 'PVC': 9, 'Acute MI': 10}
 classes = {'NORM': 0, 'STTC': 1, 'Old MI': 2, 'HYP': 3, 'TACHY': 4, 'CD': 5, 'AFIB/AFL': 6, 'PVC': 7, 'Acute MI': 8}
 class_dict = {v: k for k, v in classes.items()}
@@ -39,87 +38,37 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Train your digitization model.
 def train_models(data_folder, model_folder, verbose):
-    # Find the data files.
-    if verbose:
-        print('Finding the Challenge data...')
+    # Parameters
+    batch_size = 32
+    path = os.getcwd()
+    num_of_epochs = 10
+    yolo_model = os.path.join(path, model_folder, "YOLO", 'LEAD_detector.pt')
 
-    records = find_records(data_folder)
-    num_records = len(records)
 
-    if num_records == 0:
-        raise FileNotFoundError('No data were provided.')
+    #get model
+    classification_model = ECG_Dx.get_model("ViT", 11)
+    classification_model = classification_model.to(device)
 
-    # Train the digitization model. If you are not training a digitization model, then you can remove this part of the code.
 
-    if verbose:
-        print('Training the digitization model...')
+    #dataset for training
+    ds = ECG_cropped([data_folder], get_signal=False, YOLO_path=yolo_model)
+    ds_train, ds_val = torch.utils.data.random_split(ds, [0.8, 0.2])
+    dl_train = torch.utils.data.DataLoader(ds_train, batch_size=batch_size, shuffle=True)
+    dl_val = torch.utils.data.DataLoader(ds_val, batch_size=batch_size, shuffle=True)
 
-    # Extract the features and labels from the data.
-    if verbose:
-        print('Extracting features and labels from the data...')
+    #trainer
 
-    digitization_features = list()
-    classification_features = list()
-    classification_labels = list()
+    optimizer = torch.optim.Adam(classification_model.parameters(), lr=0.001)
+    loss_fn = torch.nn.CrossEntropyLoss()
+    trainer = Ecg12LeadImageNetTrainerMulticlass(model=classification_model, optimizer=optimizer, loss_fn=loss_fn,device=device)
+    train_result = trainer.train(num_of_epochs=num_of_epochs, train_dataloader=dl_train, val_datloader=dl_val)
 
-    # Iterate over the records.
-    for i in range(num_records):
-        if verbose:
-            width = len(str(num_records))
-            print(f'- {i + 1:>{width}}/{num_records}: {records[i]}...')
+    #save model
+    classification_model = classification_model.to("cpu")
+    model_dict = copy.deepcopy(classification_model.state_dict())
+    torch.save(model_dict, f'{model_folder}/model_dx.pt')
 
-        record = os.path.join(data_folder, records[i])
 
-        # Extract the features from the image; this simple example uses the same features for the digitization and classification
-        # tasks.
-        features = extract_features(record)
-
-        digitization_features.append(features)
-
-        # Some images may not be labeled...
-        labels = load_labels(record)
-        if any(label for label in labels):
-            classification_features.append(features)
-            classification_labels.append(labels)
-
-    # ... but we expect some images to be labeled for classification.
-    if not classification_labels:
-        raise Exception('There are no labels for the data.')
-
-    # Train the models.
-    if verbose:
-        print('Training the models on the data...')
-
-    # Train the digitization model. This very simple model uses the mean of these very simple features as a seed for a random number
-    # generator.
-    digitization_model = np.mean(features)
-
-    # Train the classification model. If you are not training a classification model, then you can remove this part of the code.
-
-    # This very simple model trains a random forest model with these very simple features.
-    classification_features = np.vstack(classification_features)
-    classes = sorted(set.union(*map(set, classification_labels)))
-    classification_labels = compute_one_hot_encoding(classification_labels, classes)
-
-    # Define parameters for random forest classifier and regressor.
-    n_estimators = 12  # Number of trees in the forest.
-    max_leaf_nodes = 34  # Maximum number of leaf nodes in each tree.
-    random_state = 56  # Random state; set for reproducibility.
-
-    # Fit the model.
-    classification_model = RandomForestClassifier(
-        n_estimators=n_estimators, max_leaf_nodes=max_leaf_nodes, random_state=random_state).fit(
-        classification_features, classification_labels)
-
-    # Create a folder for the models if it does not already exist.
-    os.makedirs(model_folder, exist_ok=True)
-
-    # Save the models.
-    save_models(model_folder, digitization_model, classification_model, classes)
-
-    if verbose:
-        print('Done.')
-        print()
 
 
 # Load your trained models. This function is *required*. You should edit this function to add your code, but do *not* change the
@@ -267,4 +216,5 @@ if __name__ == '__main__':
     digitization_model, classification_model = load_models(model_folder, True)
     classification_model.eval()
     records = find_records(data_folder)
+    train_models(data_folder, "model", False)
     #signal, labels = run_models(record, digitization_model, classification_model, True)
