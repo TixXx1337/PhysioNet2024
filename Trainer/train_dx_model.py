@@ -1,30 +1,20 @@
 import abc
-import copy
-import math
 import os
 import sys
-import pandas as pd
-from tqdm import tqdm
-import torch
 from typing import NamedTuple, List
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler
 from typing import Callable, Any
 from pathlib import Path
-import torch.nn.functional as F
-from model.model_zoo import Ecg12ImageNet
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
 sys.path.append(parent_dir)
-from Datahandling.Dataloader import ECGImage_Class_Dataset
-import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import sklearn.metrics as metrics
 import matplotlib.pyplot as plt
 import pandas as pd
-import vit_pytorch
-from vit_pytorch.deepvit import DeepViT
-from vit_pytorch.cvt import CvT
+from imblearn.over_sampling import RandomOverSampler
+from model.ECG_Dx import *
 
 
 
@@ -385,64 +375,58 @@ class Ecg12LeadImageNetTrainerMulticlass():
         self.loss_fn = loss_fn.to(device,dtype=torch.float)
         self.optimizer = optimizer
         self.device = device
+        self.m = nn.Softmax(dim=1)
 
     def train(self, num_of_epochs, train_dataloader, val_datloader):
         f1_score = []
         loss = []
         f1_score_val = []
         loss_val = []
-        m = torch.nn.Sigmoid()
         for epoch in range(num_of_epochs):
             running_loss_train = 0
             #TP, TN, FP, FN, num_correct = 0,0,0,0,0
             # Train loop
-            progress_bar_train = tqdm(train_dataloader, desc=f'Epoch {epoch + 1}/{num_of_epochs} - Loss: {running_loss_train:.4f}')
+            y_pred_train = []
+            y_true_train = []
+            progress_bar_train = tqdm(train_dataloader)
             for idx, batch in enumerate(progress_bar_train):
+                self.model = self.model.train()
                 batch_result = self._train_batch(batch)
                 running_loss_train += batch_result.loss
                 avg_loss = running_loss_train / (idx + 1)
                 progress_bar_train.set_description(f'Train Epoch {epoch + 1}/{num_of_epochs} - Loss: {avg_loss:.4f}')
-                for i in range(batch_result.out.shape[0]):
-                    y_pred = m(batch_result.out[i])
-                    y_true = batch_result.y[i]
-                    max_value = float(y_pred.max()) if y_pred.max() < 0.5 else 0.5
-                    y_pred[y_pred >= max_value] = 1
-                    y_pred[y_pred < max_value] = 0
-                    if idx==0 and i==0:
-                        y_pred_train = y_pred.detach().cpu().numpy()
-                        y_true_train = y_true.detach().cpu().numpy()
-                    else:
-                        y_pred_train = np.vstack([y_pred_train, y_pred.detach().cpu().numpy()])
-                        y_true_train = np.vstack([y_true_train, y_true.detach().cpu().numpy()])
+                y_true_train.append(batch_result.y.detach().cpu().numpy())
+                out = self.m(batch_result.out)
+                max_values, max_indices = torch.max(out, dim=1)
+                mask = out == max_values.unsqueeze(1)
+                y_pred_train.append(mask.float().cpu().numpy())
 
-            f1_score.append(metrics.f1_score(y_true_train, y_pred_train, average='micro'))
+            y_pred_train = np.concatenate(y_pred_train, axis=0).astype(np.float32)
+            y_true_train = np.concatenate(y_true_train, axis=0).astype(np.float32)
+            f1_score.append(metrics.f1_score(y_true_train, y_pred_train, average='macro'))
             loss.append(running_loss_train/len(train_dataloader))
             print(f"Epoch {epoch+1} Train: F1 Score: {f1_score[-1]}, Loss: {loss[-1]}\n")
 
 
             #Val loop
 
-
+            self.model =  self.model.eval()
             running_loss_val = 0
             progress_bar_val = tqdm(val_datloader, desc=f'Val Epoch {epoch + 1}/{num_of_epochs} - Loss: {running_loss_val:.4f}')
+            y_pred_val = []
+            y_true_val = []
             for idx, batch in enumerate(progress_bar_val):
                 batch_result = self._val_batch(batch)
                 running_loss_val += batch_result.loss
                 avg_loss = running_loss_val / (idx + 1)
-                progress_bar_val.set_description(f'Epoch {epoch + 1}/{num_of_epochs} - Loss: {avg_loss:.4f}')
-                for i in range(batch_result.out.shape[0]):
-                    y_pred = m(batch_result.out[i])
-                    y_true = batch_result.y[i]
-                    max_value = float(y_pred.max()) if y_pred.max() < 0.5 else 0.5
-                    y_pred[y_pred >= max_value] = 1
-                    y_pred[y_pred < max_value] = 0
-                    if idx==0 and i==0:
-                        y_pred_val = y_pred.detach().cpu().numpy()
-                        y_true_val = y_true.detach().cpu().numpy()
-                    else:
-                        y_pred_val = np.vstack([y_pred_val, y_pred.detach().cpu().numpy()])
-                        y_true_val = np.vstack([y_true_val, y_true.detach().cpu().numpy()])
-            f1_score_val.append(metrics.f1_score(y_true_val, y_pred_val, average='micro'))
+                progress_bar_val.set_description(f'Epoch {epoch + 1}/{num_of_epochs} - Loss: {running_loss_val:.4f}')
+                y_true_val.append(batch_result.y.detach().cpu().numpy())
+                max_values, max_indices = torch.max(batch_result.out, dim=1)
+                mask = batch_result.out == max_values.unsqueeze(1)
+                y_pred_val.append(mask.float().cpu().numpy())
+            y_pred_val = np.concatenate(y_pred_val, axis=0).astype(np.float32)
+            y_true_val = np.concatenate(y_true_val, axis=0).astype(np.float32)
+            f1_score_val.append(metrics.f1_score(y_true_val, y_pred_val, average='macro'))
             loss_val.append(avg_loss)
             print(f"Epoch {epoch+1} Val: F1 Score: {f1_score_val[-1]}, Loss: {loss_val[-1]}\n")
         return FitResult(f1_score, loss, f1_score_val, loss_val)
@@ -450,7 +434,8 @@ class Ecg12LeadImageNetTrainerMulticlass():
 
     def _train_batch(self, batch):
         x, y = batch
-        x = x.transpose(1, 2).transpose(1, 3).to(self.device, dtype=torch.float)
+        #x = x.transpose(1, 2).transpose(1, 3).to(self.device, dtype=torch.float)
+        x = x.to(self.device, dtype=torch.float)
         y = y.to(self.device, dtype=torch.float)
         out = self.model(x)
         loss = self.loss_fn(out, y)
@@ -466,7 +451,8 @@ class Ecg12LeadImageNetTrainerMulticlass():
 
     def _val_batch(self, batch):
         x, y = batch
-        x = x.transpose(1, 2).transpose(1, 3).to(self.device, dtype=torch.float)
+        #x = x.transpose(1, 2).transpose(1, 3).to(self.device, dtype=torch.float)
+        x = x.to(self.device, dtype=torch.float)
         y = y.to(self.device, dtype=torch.float)
         with torch.no_grad():
             out = self.model(x)
@@ -494,99 +480,66 @@ def plot_results(f1_score:List,loss:List, plot_name:str, output_path:str=None)->
     plt.close()
 
 
-def get_models():
-    hidden_channels = [8, 16, 32]
-    kernel_sizes = [3, 3, 5]
-    model_cnn = Ecg12ImageNet(in_channels=1, hidden_channels=hidden_channels, kernel_sizes=kernel_sizes, in_h=512,
-                              in_w=512,
-                              fc_hidden_dims=[128], dropout=0.2, stride=1, dilation=1, batch_norm=True,
-                              num_of_classes=11)
-    model_vit = vit_pytorch.ViT(
-        image_size=512,
-        patch_size=32,
-        num_classes=11,
-        dim=1024,
-        depth=6,
-        heads=16,
-        mlp_dim=2048,
-        dropout=0.1,
-        emb_dropout=0.1,
-        channels=1
-    )
-    model_deepvit = DeepViT(
-        image_size=512,
-        patch_size=32,
-        num_classes=11,
-        dim=1024,
-        depth=6,
-        heads=16,
-        mlp_dim=2048,
-        dropout=0.1,
-        emb_dropout=0.1,
-        channels=1
-    )
-    model_cct = CvT(
-        num_classes=11,
-        s1_emb_dim=64,  # stage 1 - dimension
-        s1_emb_kernel=7,  # stage 1 - conv kernel
-        s1_emb_stride=4,  # stage 1 - conv stride
-        s1_proj_kernel=3,  # stage 1 - attention ds-conv kernel size
-        s1_kv_proj_stride=2,  # stage 1 - attention key / value projection stride
-        s1_heads=1,  # stage 1 - heads
-        s1_depth=1,  # stage 1 - depth
-        s1_mlp_mult=4,  # stage 1 - feedforward expansion factor
-        s2_emb_dim=192,  # stage 2 - (same as above)
-        s2_emb_kernel=3,
-        s2_emb_stride=2,
-        s2_proj_kernel=3,
-        s2_kv_proj_stride=2,
-        s2_heads=3,
-        s2_depth=2,
-        s2_mlp_mult=4,
-        s3_emb_dim=384,  # stage 3 - (same as above)
-        s3_emb_kernel=3,
-        s3_emb_stride=2,
-        s3_proj_kernel=3,
-        s3_kv_proj_stride=2,
-        s3_heads=4,
-        s3_depth=10,
-        s3_mlp_mult=4,
-        channels=1,
-        dropout=0.
-    )
-    return [model_cnn, model_vit, model_deepvit, model_cct]
+
+def balance_dataset(X,y):
+    X,y = np.array(X), np.array(y)
+    h,w = X.shape[-2], X.shape[-1]
+    ros = RandomOverSampler(random_state=42)
+    X_flat = X.reshape(X.shape[0], -1)
+    X_resampled, y_resampled = ros.fit_resample(X_flat, y)
+    X_resampled = X_resampled.reshape(-1,13,3,h,w)
+    return X_resampled, y_resampled
+
+
+
+def delete_unused_columns(dxs:np.array):
+    columns_with_only_zeros = np.all(dxs == 0, axis=0)
+    # Get the indices of these columns
+    indices_of_columns_with_only_zeros = np.where(columns_with_only_zeros)[0]
+    filtered_array = np.delete(dxs, indices_of_columns_with_only_zeros, axis=1)
+    return filtered_array
+
 
 
 if __name__ == '__main__':
     device = 0
-    path_to_dataset = ["/work/scratch/td38heni/all"]
+    #path_to_dataset = ["/work/scratch/td38heni/all"]
     #path_to_dataset = ["/work/home/td38heni/CinC_cleaned/Datahandling/test_data"] #testing server
-    #path_to_dataset = [r"C:\Users\Tizian Dege\PycharmProjects\CinC_cleaned\Datahandling\Train\test_data"] #testing me
-    num_of_samples=10000 #add config file for runs
+    path_to_dataset = [r"C:\Users\Tizian Dege\PycharmProjects\CinC_cleaned\Datahandling\Train\test_data"] #testing me
+    path_to_dataset = ["/home/tdege/CinC_cleaned/Datahandling/fine_tune/train_set"]
+    yolo_model = "/home/tdege/CinC_cleaned/YOLO/LEAD_detector.pt"
+    num_of_samples=0 #add config file for runs
     num_of_epochs=40
-    batch_size=16
-    #path = Path().resolve()
-    path = "/work/scratch/td38heni/CinC_cleaned"
-    ds = ECGImage_Class_Dataset(path_to_dataset, get_image=True, get_dx=True, get_signal=False, samples=num_of_samples, use_single_class=True)
-    ds_train, dl_val = torch.utils.data.random_split(ds, [0.8,0.2])
-    del ds
-    df = []
-    dl_train = torch.utils.data.DataLoader(ds_train, batch_size=batch_size, shuffle=True)
-    dl_val = torch.utils.data.DataLoader(dl_val, batch_size=batch_size, shuffle=True)
-    model_name = ["CNN", "ViT", "DeepViT", "CvT"]
-    models = get_models()
-    for name, model in zip([model_name[-1]], [models[-1]]):
-        os.makedirs(f"{path}/{name}")
-        optimizer = optim.Adam(model.parameters(), lr=0.001)
-        loss_fn = nn.CrossEntropyLoss()
-        trainer = Ecg12LeadImageNetTrainerMulticlass(model=model, optimizer=optimizer, loss_fn=loss_fn,device=device)
-        train_result = trainer.train(num_of_epochs=num_of_epochs, train_dataloader=dl_train, val_datloader=dl_val)
-        model_dict = copy.deepcopy(model.state_dict())
-        torch.save(model_dict, f'{path}/{name}/model_dx_{name}.pt')
-        plot_results(train_result.f1_score, train_result.loss, "model_dx_val", output_path=f"{path}/{name}")
-        plot_results(train_result.f1_score_val, train_result.loss_val, "model_dx_val", output_path=f"{path}/{name}")
-        df = pd.DataFrame(train_result._asdict())
-        df.to_csv(f'{path}/{name}/train_result.csv')
+    batch_size=64
+    path = os.getcwd() + "/data_preprocessed"
+    #path = "/work/scratch/td38heni/CinC_cleaned"
+    ds = ECG_Turned(path_to_dataset, get_signal=False, samples=num_of_samples, YOLO_path=yolo_model)
+    ds.dx, ds.img = np.load(os.path.join(path, "dxs.npy")),  np.load(os.path.join(path, "imgs.npy"))
+    ds.dx = delete_unused_columns(ds.dx)
+    ds_train, ds_val = torch.utils.data.random_split(ds, [0.8,0.2])
+    dl_val = torch.utils.data.DataLoader(ds_val, batch_size=batch_size, shuffle=True)
+    ds.img, ds.dx = balance_dataset(ds[ds_train.indices][0], ds[ds_train.indices][1])
+    dl_train = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=True)
+    #dl_train = torch.utils.data.DataLoader(ds_train, batch_size=batch_size, shuffle=True)
+    model = get_model("ViT", num_classes=ds.dx.shape[-1])
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    loss_fn = nn.CrossEntropyLoss()
+    trainer = Ecg12LeadImageNetTrainerMulticlass(model=model, optimizer=optimizer, loss_fn=loss_fn,device=device)
+    train_result = trainer.train(num_of_epochs=num_of_epochs, train_dataloader=dl_train, val_datloader=dl_val)
+    model = model.eval()
+    results = []
+    #for x,y in dl_val:
+    #    y_pred =  model(x.to(device, dtype=torch.float))
+    #    max_values, max_indices = torch.max(y_pred, dim=1)
+    #    mask = y_pred == max_values.unsqueeze(1)
+    #    result = mask.float()
+    #    results.append(result.detach().cpu().numpy())
+    #model_dict = copy.deepcopy(model.state_dict())
+    #torch.save(model_dict, f'{path}/model_dx.pt')
+    #plot_results(train_result.f1_score, train_result.loss, "model_dx_val", output_path=f"{path}/{name}")
+    #plot_results(train_result.f1_score_val, train_result.loss_val, "model_dx_val", output_path=f"{path}/{name}")
+    #df = pd.DataFrame(train_result._asdict())
+    #df.to_csv(f'{path}}/train_result.csv')
 
 
 

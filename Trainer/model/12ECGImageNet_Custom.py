@@ -157,19 +157,6 @@ def train_model(model, train_loader, criterion, optimizer, num_epochs=25):
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
-        loss = 0
-        #for images, signals in tqdm(train_loader, desc="Epoch {}/{}, Loss: {}".format(epoch + 1, num_epochs, loss)):
-        #    images = images.float().to(1)  # Ensure images are in float32
-        #    images = images.transpose(1,3)
-        #    signals = signals.float().to(1).flatten()  # Ensure signals are in float32
-        #    optimizer.zero_grad()
-        #    outputs = model(images).flatten()
-        #    loss = criterion(outputs, signals)
-        #    loss.backward()
-        #    optimizer.step()
-        #    running_loss += loss.item() * images.size(0)
-        #epoch_loss = running_loss / len(train_loader.dataset)
-        #print(f'Epoch {epoch+1}/{num_epochs}, Loss: {epoch_loss:.4f}')
         with tqdm(train_loader) as tepoch:
             for images, signals in tepoch:
                 tepoch.set_description(f"Epoch {epoch}")

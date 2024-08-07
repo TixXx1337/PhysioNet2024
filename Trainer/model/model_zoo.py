@@ -6,7 +6,6 @@ import torch
 import torch.nn as nn
 import math
 import time
-import Dataloader
 
 
 # A simple but versatile d1 convolutional neural net
@@ -245,7 +244,7 @@ class Ecg12ImageNet(nn.Module):
         assert len(hidden_channels) == len(kernel_sizes)
 
         self.cnn = ConvNet2d(in_channels, hidden_channels, kernel_sizes, dropout, stride, dilation, batch_norm)
-
+        self.n = torch.nn.Sigmoid()
         out_channels = hidden_channels[-1]
         out_h = calc_out_length(in_h, kernel_sizes, stride, dilation)
         out_w = calc_out_length(in_w, kernel_sizes, stride, dilation)
@@ -268,7 +267,8 @@ class Ecg12ImageNet(nn.Module):
     def forward(self, x):
         out = self.cnn(x)
         out = out.reshape((x.shape[0], -1))
-        return self.fc(out)
+        out = self.fc(out)
+        return self.n(out)
 
     def num_flat_features(self, x):
         size = x.size()[1:]  # all dimensions except the batch dimension
@@ -489,16 +489,13 @@ if __name__ == '__main__':
     deconv_kernel_lengths_short = [3] * len(deconv_hidden_channels_short)
     deconv_hidden_channels_long = [2,4,8,16]
     deconv_kernel_lengths_long = [5] * len(deconv_hidden_channels_long)
-    ds = Dataloader.ECG_12Lead_Dataset("/home/tdege/DeTECRohr/output")
-
+    ds = Dataloader.ECG_12Lead_Dataset("/work/home/td38heni/CinC_cleaned/Trainer/20images")
     device = 0
-
     model = Ecg12ImageToSignalNet(in_channels=1, deconv_in_channels=len(hidden_channels), in_h=512, in_w=512,
                  conv_hidden_channels=hidden_channels, conv_kernel_sizes= kernel_sizes,
                  deconv_hidden_channels_short= deconv_hidden_channels_short, deconv_kernel_lengths_short= deconv_kernel_lengths_short,
                  deconv_hidden_channels_long= deconv_hidden_channels_long, deconv_kernel_lengths_long= deconv_kernel_lengths_long,
                  fc_hidden_dims=[128], l_out_long=1220, l_out_short=280, short_leads=12, long_leads=1).to(device) #TODO change 1Ddeconv for better output!
-
 
     ds = Dataloader.ECG_12Lead_Dataset("C:\\Users\\Tizian Dege\\PycharmProjects\\DeTECRohr\\output")
     images = torch.utils.data.DataLoader(ds, batch_size=32, shuffle=False)
