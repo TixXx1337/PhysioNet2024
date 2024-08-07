@@ -1,3 +1,4 @@
+# noinspection PyPackageRequirements
 import abc
 import os
 import sys
@@ -14,8 +15,12 @@ import sklearn.metrics as metrics
 import matplotlib.pyplot as plt
 import pandas as pd
 from imblearn.over_sampling import RandomOverSampler
-from model.ECG_Dx import *
-
+#from model.ECG_Dx import *
+from tqdm import tqdm
+from Datahandling.Dataloader_withYOLO import ECG_Turned,ECG_cropped
+from ultralytics import YOLO
+import torch
+import torch.nn as nn
 
 
 class BatchResult(NamedTuple):
@@ -508,27 +513,29 @@ if __name__ == '__main__':
     path_to_dataset = [r"C:\Users\Tizian Dege\PycharmProjects\CinC_cleaned\Datahandling\Train\test_data"] #testing me
     path_to_dataset = ["/home/tdege/CinC_cleaned/Datahandling/fine_tune/train_set"]
     yolo_model = "/home/tdege/CinC_cleaned/YOLO/LEAD_detector.pt"
-    num_of_samples=0 #add config file for runs
+    yolo = YOLO(yolo_model)
+
+    num_of_samples=303#add config file for runs
     num_of_epochs=40
     batch_size=64
     path = os.getcwd() + "/data_preprocessed"
     #path = "/work/scratch/td38heni/CinC_cleaned"
-    ds = ECG_Turned(path_to_dataset, get_signal=False, samples=num_of_samples, YOLO_path=yolo_model)
-    ds.dx, ds.img = np.load(os.path.join(path, "dxs.npy")),  np.load(os.path.join(path, "imgs.npy"))
-    ds.dx = delete_unused_columns(ds.dx)
-    ds_train, ds_val = torch.utils.data.random_split(ds, [0.8,0.2])
-    dl_val = torch.utils.data.DataLoader(ds_val, batch_size=batch_size, shuffle=True)
-    ds.img, ds.dx = balance_dataset(ds[ds_train.indices][0], ds[ds_train.indices][1])
-    dl_train = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=True)
-    #dl_train = torch.utils.data.DataLoader(ds_train, batch_size=batch_size, shuffle=True)
-    model = get_model("ViT", num_classes=ds.dx.shape[-1])
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
-    loss_fn = nn.CrossEntropyLoss()
-    trainer = Ecg12LeadImageNetTrainerMulticlass(model=model, optimizer=optimizer, loss_fn=loss_fn,device=device)
-    train_result = trainer.train(num_of_epochs=num_of_epochs, train_dataloader=dl_train, val_datloader=dl_val)
-    model = model.eval()
-    results = []
-    #for x,y in dl_val:
+    ds = ECG_cropped(path_to_dataset, get_signal=False, samples=num_of_samples, YOLO_path=yolo_model)
+    #ds.dx, ds.img = np.load(os.path.join(path, "dxs.npy")),  np.load(os.path.join(path, "imgs.npy"))
+    ##ds.dx = delete_unused_columns(ds.dx)
+    ##ds_train, ds_val = torch.utils.data.random_split(ds, [0.8,0.2])
+    ##dl_val = torch.utils.data.DataLoader(ds_val, batch_size=batch_size, shuffle=True)
+    ##ds.img, ds.dx = balance_dataset(ds[ds_train.indices][0], ds[ds_train.indices][1])
+    ##dl_train = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=True)
+    ###dl_train = torch.utils.data.DataLoader(ds_train, batch_size=batch_size, shuffle=True)
+    ##model = get_model("ViT", num_classes=ds.dx.shape[-1])
+    ##optimizer = optim.Adam(model.parameters(), lr=0.001)
+    ##loss_fn = nn.CrossEntropyLoss()
+    ##trainer = Ecg12LeadImageNetTrainerMulticlass(model=model, optimizer=optimizer, loss_fn=loss_fn,device=device)
+    ##train_result = trainer.train(num_of_epochs=num_of_epochs, train_dataloader=dl_train, val_datloader=dl_val)
+    ##model = model.eval()
+    ##results = []
+    ###for x,y in dl_val:
     #    y_pred =  model(x.to(device, dtype=torch.float))
     #    max_values, max_indices = torch.max(y_pred, dim=1)
     #    mask = y_pred == max_values.unsqueeze(1)

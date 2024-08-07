@@ -1,5 +1,4 @@
 import copy
-from Datahandling.Dataloader_withYOLO import ECG_Turned
 from tqdm import tqdm
 import numpy
 import matplotlib.pyplot as plt
