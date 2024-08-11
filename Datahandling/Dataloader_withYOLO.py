@@ -35,16 +35,16 @@ class ECG_cropped(Dataset):
         self.get_signal = get_signal
         self.transform = transform
         self.path_to_dataset = path_to_dataset
-        self.yolo = YOLO(YOLO_path)
         self.lead_name = {0: 'I', 1: 'II', 2: 'III', 3: 'aVR', 4: 'aVL', 5: 'aVF', 6: 'V1', 7: 'V2', 8: 'V3', 9: 'V4', 10: 'V5', 11: 'V6'}
         self.reversed_lead_names = {v: k for k, v in self.lead_name.items()}
         df_dataset_all = []
         for path in path_to_dataset:
+            tqdm.pandas()
             header = glob.glob(f"{path}/*.hea")
             df_dataset = pd.DataFrame({"header": header})
             df_dataset["basename"] = df_dataset["header"].apply(lambda x: os.path.basename(x))
             df_dataset["basename"] = df_dataset["basename"].apply(lambda x: x[:-4])
-            df_dataset = df_dataset.apply(func=get_class, axis=1)
+            df_dataset = df_dataset.progress_apply(func=get_class, axis=1)
             df_dataset_all.append(df_dataset)
         df_dataset_all = pd.concat(df_dataset_all, ignore_index=True)
         self.data = df_dataset_all
@@ -53,19 +53,25 @@ class ECG_cropped(Dataset):
         self.reversed_classed = {v: k for k, v in self.classes.items()}
         if samples is not None:
             self.data = self.data.sample(samples)
+        self.data = self.data.explode("dx")
+        self.data.dropna(inplace=True)
+        self.data["dx"] = self.data["dx"].apply(lambda x: [x])
         images = list(self.data["image"])
-        max_images = 50
-        self.results = []
-        for i in range(0,len(images), max_images):
-            results = self.yolo(images[i:i+max_images])
-            results = [result.cpu() for result in results]
-            self.results.extend(results)
-        if verbose:
-            print(f"The Average Age is {self.data['Age'].astype(int).mean()}")
-            print("We have")
-            for category in ["Sex", "dx"]:
-                data = self.data[category].value_counts().to_dict()
-                print(data)
+        if YOLO_path is not None:
+            yolo_path = os.path.join(os.getcwd(),"Datahandling",'LEAD_detector.pt')
+            self.yolo = YOLO(yolo_path)
+            max_images = 200
+            self.results = []
+            for i in tqdm(range(0,len(images), max_images)):
+                results = self.yolo(images[i:i+max_images])
+                results = [result.cpu() for result in results]
+                self.results.extend(results)
+            if verbose:
+                print(f"The Average Age is {self.data['Age'].astype(int).mean()}")
+                print("We have")
+                for category in ["Sex", "dx"]:
+                    data = self.data[category].value_counts().to_dict()
+                    print(data)
 
     def __len__(self):
         return len(self.data)
