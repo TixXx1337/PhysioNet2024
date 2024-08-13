@@ -88,6 +88,7 @@ def load_models(model_folder, verbose):
 def run_models(record, digitization_model, classification_model, verbose):
     # Run the digitization model; if you did not train this model, then you can set signal = None.
     path_to_yolo = os.path.join(os.getcwd(),"model","YOLO", 'LEAD_detector.pt')
+    digitization_model = digitization_model.to("cpu")
     yolo = YOLO(path_to_yolo)
     signal = None
     path = os.path.split(record)[0]
@@ -101,7 +102,7 @@ def run_models(record, digitization_model, classification_model, verbose):
     image = cv2.GaussianBlur(image, (3, 3), 100)
     images = get_cropped_images(image, short_leads_sorted, long_lead)
     images = torch.tensor(images)
-    images = images.reshape(1, *images.shape).to(device ,dtype=torch.float32)
+    images = images.reshape(1, *images.shape).to("cpu" ,dtype=torch.float32)
     out = classification_model(images)
     max_index = torch.argmax(out).item()
     labels = class_dict[max_index]
