@@ -34,6 +34,7 @@ class ECG_cropped(Dataset):
         self.data_info = []
         self.get_signal = get_signal
         self.transform = transform
+        self.YOLO_path = YOLO_path
         self.path_to_dataset = path_to_dataset
         self.lead_name = {0: 'I', 1: 'II', 2: 'III', 3: 'aVR', 4: 'aVL', 5: 'aVF', 6: 'V1', 7: 'V2', 8: 'V3', 9: 'V4', 10: 'V5', 11: 'V6'}
         self.reversed_lead_names = {v: k for k, v in self.lead_name.items()}
@@ -81,16 +82,19 @@ class ECG_cropped(Dataset):
         dx = self.get_dx(idx)
         if self.get_signal:
             signal = self.load_signal(idx)
-        result = self.results[idx]
-        short_leads_sorted, long_lead = self.sort_leads(result)
+        if self.YOLO_path is not None:
+            result = self.results[idx]
+            short_leads_sorted, long_lead = self.sort_leads(result)
         image = cv2.imread(path_to_img)
         # gaussian blur for denoising
         image = cv2.GaussianBlur(image, (3, 3), 100)
-        images = self.get_cropped_images(image, short_leads_sorted, long_lead)
+        image = self.get_whole_image(image)
+        if self.YOLO_path is not None:
+            image = self.get_cropped_images(image, short_leads_sorted, long_lead)
         if self.get_signal:
-            return images, dx, signal
+            return image, dx, signal
         else:
-            return images, dx
+            return image, dx
 
 
     def get_dx(self, idx):
@@ -100,6 +104,12 @@ class ECG_cropped(Dataset):
             dxs[self.classes[dx]] = 1
             break
         return np.array(dxs)
+
+    def get_whole_image(self, image):
+        image = cv2.resize(image, (512,512), interpolation=cv2.INTER_LINEAR)
+        image = image.transpose(2, 0, 1) / 255
+        return image
+
 
     def get_cropped_images(self, image, short_leads, long_lead, target_size=(128,128)):
         imgs = []
