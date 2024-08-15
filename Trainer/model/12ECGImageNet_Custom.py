@@ -84,8 +84,6 @@ class ConvNet2d(nn.Module):
         return num_features
 
 
-
-
 class Ecg12ImageNet_Custom(nn.Module):
     def __init__(self, in_channels: int, hidden_channels: list, kernel_sizes: list, in_h: int, in_w: int,
                  fc_hidden_dims: list, dropout=None, stride=1, dilation=1, batch_norm=False):

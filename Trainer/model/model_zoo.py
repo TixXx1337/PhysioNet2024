@@ -279,7 +279,6 @@ class Ecg12ImageNet(nn.Module):
 
 
 class Ecg12ImageToSignalNet(nn.Module):
-
     def __init__(self, in_channels: int, deconv_in_channels: int, in_h: int, in_w: int,
                  conv_hidden_channels: list, conv_kernel_sizes: list,
                  deconv_hidden_channels_short: list, deconv_kernel_lengths_short: list,
@@ -384,85 +383,7 @@ class NewNet(nn.Module):
         return num_features
 
 
-class BloodSugarSexMagik(nn.Module):
 
-    def __init__(self, in_channels: int, in_h: int, in_w: int, in_kernel=3, cleaned_channels=1, attention_kernel=3,
-                 bias_kernel=3, l_out_long=5000, l_out_short=1250, short_leads=12, long_leads=1):
-
-        super().__init__()
-        assert in_kernel % 2 == attention_kernel % 2 == bias_kernel % 2 == 1
-
-        self.in_h = in_h
-        self.in_w = in_w
-        self.long_leads = long_leads
-        self.short_leads = short_leads
-        self.l_out_long = l_out_long
-        self.l_out_short = l_out_short
-
-        self.in_conv = nn.Conv2d(in_channels, cleaned_channels, in_kernel, padding=in_kernel // 2)
-        self.reLu = nn.ReLU()
-
-        self.attention_short = nn.Conv2d(short_leads + cleaned_channels, short_leads,
-                                         attention_kernel, padding=attention_kernel // 2)
-        self.bias_short = nn.Conv2d(short_leads + cleaned_channels, short_leads,
-                                    bias_kernel, padding=bias_kernel // 2)
-        self.attention_long = nn.Conv2d(long_leads + cleaned_channels, long_leads, attention_kernel,
-                                        padding=attention_kernel // 2)
-        self.bias_long = nn.Conv2d(long_leads + cleaned_channels, long_leads, bias_kernel,
-                                   padding=bias_kernel // 2)
-
-        self.fc_short = nn.Linear(in_h * in_w * short_leads, short_leads)
-        self.fc_long = nn.Linear(in_h * in_w * long_leads, long_leads)
-
-        self.h_a_short = torch.zeros((1, self.short_leads, self.in_h, self.in_w))
-        self.h_a_long = torch.zeros((1, self.long_leads, self.in_h, self.in_w))
-        self.h_b_short = torch.zeros_like(self.h_a_short)
-        self.h_b_long = torch.zeros_like(self.h_a_long)
-
-    def forward(self, x, h=None, y_short=0, y_long=0, short_steps=100, long_steps=100):
-        device = x.device
-        batch_size = x.shape[0]
-
-        if h is not None:
-            self.h_a_short = h[0]
-            self.h_a_long = h[1]
-            self.h_b_short = h[2]
-            self.h_b_long = h[3]
-
-        self.h_a_short = self.h_a_short.to(device)
-        self.h_a_long = self.h_a_long.to(device)
-        self.h_b_short = self.h_b_short.to(device)
-        self.h_b_long = self.h_b_long.to(device)
-
-        c = self.in_conv(x)
-        start = time.time()
-        for i in range(short_steps):
-            self.h_a_short = self.attention_short(torch.cat((c, self.h_a_short), dim=1))
-            self.h_b_short = self.bias_short(torch.cat((c, self.h_b_short), dim=1))
-            out = c * self.h_a_short + self.h_b_short
-            print(out.shape)
-            out = self.fc_short(out.reshape(batch_size, -1)).reshape(batch_size, self.short_leads, 1)
-            y_short = torch.cat((y_short, out), dim=2)
-
-        for i in range(long_steps):
-            h_a_long = self.attention_long(torch.cat((c, self.h_a_long), dim=1))
-            h_b_long = self.bias_long(torch.cat((c, self.h_b_long), dim=1))
-            out = c * h_a_long + h_b_long
-            out = self.fc_long(out.reshape(batch_size, -1)).reshape(batch_size, self.long_leads, 1)
-            y_long = torch.cat((y_long, out), dim=2)
-
-        y = (y_short, y_long)
-        h = (self.h_a_short.detach_(), self.h_a_long.detach_(), self.h_b_short.detach_(), self.h_b_long.detach_())
-        end = time.time()
-        print(f'Time taken {end - start}')
-        return y, h
-
-    def num_flat_features(self, x):
-        size = x.size()[1:]  # all dimensions except the batch dimension
-        num_features = 1
-        for s in size:
-            num_features *= s
-        return num_features
 
 
 def calc_out_length(l_in: int, kernel_lengths: list, stride: int, dilation: int, padding=0):

@@ -1,4 +1,6 @@
 import copy
+import os
+import sys
 from tqdm import tqdm
 import numpy
 import matplotlib.pyplot as plt
@@ -6,6 +8,9 @@ import torch
 from torch import nn
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(current_dir)
+from cnn import Ecg12ImageNet
 
 # helpers
 
@@ -150,16 +155,13 @@ class ANNDecoder(nn.Module):
         return self.model(x)
 
 
-
-
-
-
 class Ecg12Dxnet(nn.Module):
-    def __init__(self, encoder, num_classes:int=11, parallel:int=13):
+    def __init__(self, encoder, num_classes:int=11, parallel:int=13,use_whole_image:bool=False):
         super(Ecg12Dxnet, self).__init__()
         self.encoders = []
         self.parallel = parallel
         self.layers =[]
+        self.whole_image = use_whole_image
         #for i in range(parallel): #last for long lead
         self.encoders = nn.ModuleList([copy.deepcopy(encoder) for i in range(parallel)])
         self.layers.append(nn.Linear(num_classes*parallel, num_classes))
@@ -174,7 +176,53 @@ class Ecg12Dxnet(nn.Module):
             return self.out[:-1](x)
         return self.out(x)
 
+class SimpleCNN(nn.Module):
+    def __init__(self, num_classes:int):
+        super(SimpleCNN, self).__init__()
+        self.num_classes = num_classes
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1)
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.fc1 = nn.Linear(64*53*68, 512)          # Adjusted  to input size (425, 550)
+        self.fc2 = nn.Linear(512, self.num_classes)  # 11 output classes for multilabel classification
 
+    def forward(self, x):
+        x = self.pool(torch.relu(self.conv1(x)))
+        x = self.pool(torch.relu(self.conv2(x)))
+        x = self.pool(torch.relu(self.conv3(x)))
+        x = x.view(-1, x.shape[1] * x.shape[2]* x.shape[3])
+        x = torch.relu(self.fc1(x))
+        if self.training:
+            return self.fc2(x)
+        x = torch.sigmoid(self.fc2(x))  # Sigmoid activation for multilabel classification
+        return x
+
+
+def get_simple_model(model_name:str,num_classes:int=11, image_size:int=(640,1024), patch_size:int=32, dim:int=256,droput:float=0.1):
+    if model_name == 'ViT':
+        model = ViT(image_size = image_size[1],
+                    patch_size = patch_size,
+                    dim = dim,
+                    depth = 6,
+                    heads = 16,
+                    mlp_dim = 2048,
+                    dropout = droput,
+                    emb_dropout = 0.1,
+                    num_classes=num_classes
+                    )
+
+    elif model_name == 'CNN':
+        #hidden_channels = [64, 32, 16, 8, 4]
+        #kernel_sizes = [9, 7, 5, 3, 3]
+        hidden_channels = [3,16,32,64]
+        kernel_sizes = [3, 3, 3, 3]
+        model = Ecg12ImageNet(in_channels=3, hidden_channels=hidden_channels, kernel_sizes=kernel_sizes, in_h= image_size[0], in_w=image_size[1],
+                 fc_hidden_dims=[512],  stride=2, dilation=1, batch_norm=True, num_of_classes=num_classes)
+
+    elif model_name == 'CNN_small':
+        model = SimpleCNN(num_classes=num_classes)
+    return model
 
 
 def get_model(model_name:str,num_classes:int=11, image_size:int=128, patch_size:int=32, dim:int=256,droput:float=0.1):
@@ -189,30 +237,21 @@ def get_model(model_name:str,num_classes:int=11, image_size:int=128, patch_size:
                     emb_dropout = 0.1,
                     num_classes=num_classes
                     )
+    #elif model_name == 'CNN':
+    #    encoder = CNN(num_classes=num_classes)
     return Ecg12Dxnet(encoder=encoder, num_classes=num_classes)
 
 
 
 if __name__ == '__main__':
-    path_to_dataset = ["/home/tdege/CinC_cleaned/Datahandling/20images"]
-    ##path_to_dataset = [r"C:\Users\Tizian Dege\PycharmProjects\CinC_cleaned\Datahandling\Train\20images"]
+    #path_to_dataset = ["/home/tdege/CinC_cleaned/Datahandling/20images"]
+    ##path_to_dataset = [r"C:\\Users\Tizian Dege\PycharmProjects\CinC_cleaned\Datahandling\Train\\20images"]
     #yolo_model = "/home/tdege/CinC_cleaned/YOLO/LEAD_detector.pt"
-    ##yolo_model = r"C:\Users\Tizian Dege\PycharmProjects\CinC_cleaned\YOLO\LEAD_detector.pt"
+    ##yolo_model = r"C:\\Users\Tizian Dege\PycharmProjects\CinC_cleaned\YOLO\LEAD_detector.pt"
     #dataset_image = ECG_Turned(path_to_dataset, samples=None, YOLO_path=yolo_model)
-    #model = get_model(model_name="ViT", decoder_name="Transformer", dim=2)
-    encoder = ViT(image_size=128,
-                  patch_size=32,
-                  num_classes=11,
-                  dim=512,
-                  depth=6,
-                  heads=16,
-                  mlp_dim=2048,
-                  dropout=0.1,
-                  emb_dropout=0.1,
-                  channels=3
-                  )
-    x = torch.randn(5, 13, 3, 128, 128)
-    model = Ecg12Dxnet(encoder)
+    #model = get_model(model_name="CNN")
+    model = get_simple_model(model_name="VIT",image_size=(512,512), num_classes=11)
+    x = torch.randn(5, 3, 512, 512)
     y = model(x)
     #dl_train = torch.utils.data.DataLoader(dataset_image, batch_size=4, shuffle=False)
     #imgs, dx, signal = next(iter(dl_train))
