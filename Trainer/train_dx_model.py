@@ -1,5 +1,6 @@
 # noinspection PyPackageRequirements
 import abc
+import copy
 import os
 import sys
 from typing import NamedTuple, List
@@ -9,18 +10,23 @@ from pathlib import Path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
 sys.path.append(parent_dir)
+sys.path.append(current_dir)
+sys.path.append(os.path.join(current_dir, "model"))
 import torch.optim as optim
 import numpy as np
 import sklearn.metrics as metrics
 import matplotlib.pyplot as plt
 import pandas as pd
 from imblearn.over_sampling import RandomOverSampler
-#from model.ECG_Dx import *
+from ECG_Dx import *
 from tqdm import tqdm
 from Datahandling.Dataloader_withYOLO import ECG_Turned,ECG_cropped
+from Datahandling.Dataloader_all import ECG_all, ECG_multi
 from ultralytics import YOLO
 import torch
 import torch.nn as nn
+from sklearn.utils import resample
+from sklearn.model_selection import train_test_split
 
 
 class BatchResult(NamedTuple):
@@ -380,7 +386,8 @@ class Ecg12LeadImageNetTrainerMulticlass():
         self.loss_fn = loss_fn.to(device,dtype=torch.float)
         self.optimizer = optimizer
         self.device = device
-        self.m = nn.Softmax(dim=1)
+        #self.m = nn.Softmax(dim=1)
+        self.m = nn.Sigmoid()
 
     def train(self, num_of_epochs, train_dataloader, val_datloader):
         f1_score = []
@@ -393,18 +400,20 @@ class Ecg12LeadImageNetTrainerMulticlass():
             # Train loop
             y_pred_train = []
             y_true_train = []
+            self.model = self.model.train()
             progress_bar_train = tqdm(train_dataloader)
             for idx, batch in enumerate(progress_bar_train):
-                self.model = self.model.train()
                 batch_result = self._train_batch(batch)
                 running_loss_train += batch_result.loss
                 avg_loss = running_loss_train / (idx + 1)
                 progress_bar_train.set_description(f'Train Epoch {epoch + 1}/{num_of_epochs} - Loss: {avg_loss:.4f}')
                 y_true_train.append(batch_result.y.detach().cpu().numpy())
                 out = self.m(batch_result.out)
-                max_values, max_indices = torch.max(out, dim=1)
-                mask = out == max_values.unsqueeze(1)
-                y_pred_train.append(mask.float().cpu().numpy())
+                predictions = (out >= 0.5).int()
+                y_pred_train.append(predictions.detach().cpu().numpy())
+                #max_values, max_indices = torch.max(out, dim=1)
+                #mask = out == max_values.unsqueeze(1)
+                #y_pred_train.append(mask.float().cpu().numpy())
 
             y_pred_train = np.concatenate(y_pred_train, axis=0).astype(np.float32)
             y_true_train = np.concatenate(y_true_train, axis=0).astype(np.float32)
@@ -424,11 +433,12 @@ class Ecg12LeadImageNetTrainerMulticlass():
                 batch_result = self._val_batch(batch)
                 running_loss_val += batch_result.loss
                 avg_loss = running_loss_val / (idx + 1)
-                progress_bar_val.set_description(f'Epoch {epoch + 1}/{num_of_epochs} - Loss: {running_loss_val:.4f}')
+                progress_bar_val.set_description(f'Epoch {epoch + 1}/{num_of_epochs} - Loss: {avg_loss:.4f}')
                 y_true_val.append(batch_result.y.detach().cpu().numpy())
-                max_values, max_indices = torch.max(batch_result.out, dim=1)
-                mask = batch_result.out == max_values.unsqueeze(1)
-                y_pred_val.append(mask.float().cpu().numpy())
+                #max_values, max_indices = torch.max(batch_result.out, dim=1)
+                #mask = batch_result.out == max_values.unsqueeze(1)
+                predictions = (batch_result.out >= 0.5).int()
+                y_pred_val.append(predictions.detach().cpu().numpy())
             y_pred_val = np.concatenate(y_pred_val, axis=0).astype(np.float32)
             y_true_val = np.concatenate(y_true_val, axis=0).astype(np.float32)
             f1_score_val.append(metrics.f1_score(y_true_val, y_pred_val, average='macro'))
@@ -448,15 +458,14 @@ class Ecg12LeadImageNetTrainerMulticlass():
         loss.backward()
         self.optimizer.step()
         num_correct = torch.sum((out > 0) == (y == 1)).item()
-        TP = torch.sum((out > 0) * (y == 1)).item()
-        TN = torch.sum((out <= 0) * (y == 0)).item()
-        FP = torch.sum((out > 0) * (y == 0)).item()
-        FN = torch.sum((out <= 0) * (y == 1)).item()
+        TP = torch.sum((out > 0.5) * (y == 1)).item()
+        TN = torch.sum((out <= 0.5) * (y == 0)).item()
+        FP = torch.sum((out > 0.5) * (y == 0)).item()
+        FN = torch.sum((out <= 0.5) * (y == 1)).item()
         return BatchResult(loss.item(), num_correct, TP, TN, FP, FN, out, y)
 
     def _val_batch(self, batch):
         x, y = batch
-        #x = x.transpose(1, 2).transpose(1, 3).to(self.device, dtype=torch.float)
         x = x.to(self.device, dtype=torch.float)
         y = y.to(self.device, dtype=torch.float)
         with torch.no_grad():
@@ -485,7 +494,7 @@ def plot_results(f1_score:List,loss:List, plot_name:str, output_path:str=None)->
     plt.close()
 
 
-
+"""
 def balance_dataset(X,y):
     X,y = np.array(X), np.array(y)
     h,w = X.shape[-2], X.shape[-1]
@@ -494,7 +503,26 @@ def balance_dataset(X,y):
     X_resampled, y_resampled = ros.fit_resample(X_flat, y)
     X_resampled = X_resampled.reshape(-1,13,3,h,w)
     return X_resampled, y_resampled
+"""
 
+def balance_dataset(df:pd.DataFrame):
+    target_samples = df['labels'].value_counts().max()
+    resampled_dfs = []
+    for label in df['labels'].unique():
+        df_class = df[df['labels'] == label]
+        if len(df_class) < target_samples:
+            df_class_resampled = resample(df_class,
+                                          replace=True,  # Oversample with replacement
+                                          n_samples=target_samples,  # Match the target number of samples
+                                          random_state=42)  # For reproducibility
+        else:
+            df_class_resampled = df_class
+        resampled_dfs.append(df_class_resampled)
+    df_balanced = pd.concat(resampled_dfs)
+
+    # Shuffle the balanced dataframe
+    df_balanced = df_balanced.sample(frac=1, random_state=42).reset_index(drop=True)
+    return df_balanced
 
 
 def delete_unused_columns(dxs:np.array):
@@ -510,30 +538,48 @@ if __name__ == '__main__':
     device = 0
     #path_to_dataset = ["/work/scratch/td38heni/all"]
     #path_to_dataset = ["/work/home/td38heni/CinC_cleaned/Datahandling/test_data"] #testing server
-    path_to_dataset = [r"C:\Users\Tizian Dege\PycharmProjects\CinC_cleaned\Datahandling\Train\test_data"] #testing me
+    #path_to_dataset = [r"C:\Users\Tizian Dege\PycharmProjects\PhysioNet2024\Datahandling\all"] #testing me
     path_to_dataset = ["/home/tdege/CinC_cleaned/Datahandling/fine_tune/train_set"]
-    yolo_model = "/home/tdege/CinC_cleaned/YOLO/LEAD_detector.pt"
-    yolo = YOLO(yolo_model)
-
-    num_of_samples=303#add config file for runs
-    num_of_epochs=40
+    #path_to_dataset = ["/home/tdege/PhysioNet2024/Datahandling/testset"]
+    #path_to_dataset = ["/home/tdege/PhysioNet2024/Datahandling/all"]
+    #path_to_dataset = ["/home/tdege/CinC_cleaned/Datahandling/20images"]
+    #yolo_model = r"C:\Users\Tizian Dege\PycharmProjects\PhysioNet2024\model\YOLO\LEAD_detector.pt"
+    #yolo_model = r"/home/tdege/PhysioNet2024/model/YOLO/LEAD_detector.pt"
+    num_of_samples=None#add config file for runs
+    num_of_epochs=10
     batch_size=64
-    path = os.getcwd() + "/data_preprocessed"
+    #path = os.getcwd() + "/data_preprocessed"
     #path = "/work/scratch/td38heni/CinC_cleaned"
-    ds = ECG_cropped(path_to_dataset, get_signal=False, samples=num_of_samples, YOLO_path=yolo_model)
+    ds = ECG_multi(path_to_dataset, get_signal=False, YOLO_path=None, samples=num_of_samples)
+    #labels = []
+    #for label in list(ds.data["Labels"]):
+    #    labels.extend([x.strip() for x in label.split(',')])
+
     #ds.dx, ds.img = np.load(os.path.join(path, "dxs.npy")),  np.load(os.path.join(path, "imgs.npy"))
     ##ds.dx = delete_unused_columns(ds.dx)
-    ##ds_train, ds_val = torch.utils.data.random_split(ds, [0.8,0.2])
-    ##dl_val = torch.utils.data.DataLoader(ds_val, batch_size=batch_size, shuffle=True)
+    #ds_train, ds_val = torch.utils.data.random_split(ds, [0.8,0.2])
+    train, val = train_test_split(ds.data, test_size=0.2)
     ##ds.img, ds.dx = balance_dataset(ds[ds_train.indices][0], ds[ds_train.indices][1])
     ##dl_train = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=True)
-    ###dl_train = torch.utils.data.DataLoader(ds_train, batch_size=batch_size, shuffle=True)
-    ##model = get_model("ViT", num_classes=ds.dx.shape[-1])
-    ##optimizer = optim.Adam(model.parameters(), lr=0.001)
-    ##loss_fn = nn.CrossEntropyLoss()
-    ##trainer = Ecg12LeadImageNetTrainerMulticlass(model=model, optimizer=optimizer, loss_fn=loss_fn,device=device)
-    ##train_result = trainer.train(num_of_epochs=num_of_epochs, train_dataloader=dl_train, val_datloader=dl_val)
-    ##model = model.eval()
+    ds.data = balance_dataset(train)
+    ds_train = copy.deepcopy(ds)
+    dl_train = copy.deepcopy(torch.utils.data.DataLoader(ds_train, batch_size=batch_size, shuffle=True))
+    ds.data = val
+    ds_val = copy.deepcopy(ds)
+    dl_val = torch.utils.data.DataLoader(ds_val, batch_size=batch_size, shuffle=True)
+    num_classes = len(ds.classes)
+    model = get_simple_model("CNN", num_classes=num_classes, image_size=(512,512))
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+    #weights = ds.data["labels"].value_counts().reset_index().to_dict()
+    #weights = np.array(list(weights["count"].values()))
+    #weights = weights / weights.mean()
+    #weights = weights / weights.sum()
+    #loss_fn = nn.CrossEntropyLoss(weight=torch.tensor(weights))
+    #loss_fn = nn.CrossEntropyLoss()
+    loss_fn = nn.BCEWithLogitsLoss()
+    trainer = Ecg12LeadImageNetTrainerMulticlass(model=model, optimizer=optimizer, loss_fn=loss_fn,device=device)
+    train_result = trainer.train(num_of_epochs=num_of_epochs, train_dataloader=dl_train, val_datloader=dl_val)
     ##results = []
     ###for x,y in dl_val:
     #    y_pred =  model(x.to(device, dtype=torch.float))
@@ -541,12 +587,13 @@ if __name__ == '__main__':
     #    mask = y_pred == max_values.unsqueeze(1)
     #    result = mask.float()
     #    results.append(result.detach().cpu().numpy())
-    #model_dict = copy.deepcopy(model.state_dict())
-    #torch.save(model_dict, f'{path}/model_dx.pt')
-    #plot_results(train_result.f1_score, train_result.loss, "model_dx_val", output_path=f"{path}/{name}")
-    #plot_results(train_result.f1_score_val, train_result.loss_val, "model_dx_val", output_path=f"{path}/{name}")
-    #df = pd.DataFrame(train_result._asdict())
-    #df.to_csv(f'{path}}/train_result.csv')
+    model = model.to("cpu")
+    model_dict = copy.deepcopy(model.state_dict())
+    torch.save(model_dict, f'model_dx_CNN_BCE.pt')
+    ##plot_results(train_result.f1_score, train_result.loss, "model_dx_val", output_path=f"{path}/{name}")
+    ##plot_results(train_result.f1_score_val, train_result.loss_val, "model_dx_val", output_path=f"{path}/{name}")
+    df = pd.DataFrame(train_result._asdict())
+    df.to_csv(f'train_result_CNN.csv')
 
 
 
