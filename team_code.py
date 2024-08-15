@@ -21,8 +21,9 @@ from Trainer.train_dx_model import *
 from Datahandling.Dataloader_withYOLO import *
 from ultralytics import YOLO
 import torch
-#classes = {'NORM': 0, 'STTC': 1, 'PAC': 2, 'Old MI': 3, 'HYP': 4, 'TACHY': 5, 'CD': 6, 'BRADY': 7, 'AFIB/AFL': 8, 'PVC': 9, 'Acute MI': 10}
-classes = {'NORM': 0, 'STTC': 1, 'Old MI': 2, 'HYP': 3, 'TACHY': 4, 'CD': 5, 'AFIB/AFL': 6, 'PVC': 7, 'Acute MI': 8}
+classes = {'NORM': 0, 'Old MI': 1, 'STTC': 2, 'CD': 3, 'HYP': 4, 'AFIB/AFL': 5, 'PVC': 6, 'TACHY': 7, 'BRADY': 8,
+                'PAC': 9, 'Acute MI': 10}
+#classes = {'NORM': 0, 'STTC': 1, 'Old MI': 2, 'HYP': 3, 'TACHY': 4, 'CD': 5, 'AFIB/AFL': 6, 'PVC': 7, 'Acute MI': 8}
 class_dict = {v: k for k, v in classes.items()}
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -39,27 +40,26 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Train your digitization model.
 def train_models(data_folder, model_folder, verbose):
     # Parameters
-    batch_size = 32
+    batch_size = 16
     path = os.getcwd()
     num_of_epochs = 10
-    yolo_model = os.path.join(path, model_folder, "YOLO", 'LEAD_detector.pt')
+    #yolo_model = os.path.join(path, model_folder, "YOLO", 'LEAD_detector.pt')
 
 
     #get model
-    classification_model = ECG_Dx.get_model("ViT", 11)
+    classification_model = ECG_Dx.get_simple_model("CNN", num_classes=11, image_size=(512,512))
     classification_model = classification_model.to(device)
 
 
     #dataset for training
-    ds = ECG_cropped([data_folder], get_signal=False, YOLO_path=yolo_model)
+    ds = ECG_multi([data_folder], get_signal=False, YOLO_path=None)
     ds_train, ds_val = torch.utils.data.random_split(ds, [0.8, 0.2])
     dl_train = torch.utils.data.DataLoader(ds_train, batch_size=batch_size, shuffle=True)
     dl_val = torch.utils.data.DataLoader(ds_val, batch_size=batch_size, shuffle=True)
 
     #trainer
-
     optimizer = torch.optim.Adam(classification_model.parameters(), lr=0.001)
-    loss_fn = torch.nn.CrossEntropyLoss()
+    loss_fn = torch.nn.BCEWithLogitsLoss()
     trainer = Ecg12LeadImageNetTrainerMulticlass(model=classification_model, optimizer=optimizer, loss_fn=loss_fn,device=device)
     train_result = trainer.train(num_of_epochs=num_of_epochs, train_dataloader=dl_train, val_datloader=dl_val)
 
@@ -77,9 +77,9 @@ def load_models(model_folder, verbose):
     digitization_model = None
 
 
-    classification_model = ECG_Dx.get_model("ViT", 9)
-    digitization_filename = os.path.join(model_folder, 'model_dx.pt')
-    classification_model.load_state_dict(torch.load(digitization_filename))
+    classification_model = ECG_Dx.get_simple_model("CNN", num_classes=11, image_size=(512,512))
+    classification_path = os.path.join(model_folder, 'model_dx.pt')
+    classification_model.load_state_dict(torch.load(classification_path))
     return digitization_model, classification_model
 
 
@@ -87,26 +87,35 @@ def load_models(model_folder, verbose):
 # change the arguments of this function. If you did not train one of the models, then you can return None for the model.
 def run_models(record, digitization_model, classification_model, verbose):
     # Run the digitization model; if you did not train this model, then you can set signal = None.
-    path_to_yolo = os.path.join(os.getcwd(),"model","YOLO", 'LEAD_detector.pt')
-    digitization_model = digitization_model.to("cpu")
-    yolo = YOLO(path_to_yolo)
+    #path_to_yolo = os.path.join(os.getcwd(),"model","YOLO", 'LEAD_detector.pt')
+    #yolo = YOLO(path_to_yolo)
     signal = None
+    classification_model = classification_model.eval()
+    classification_model = classification_model.to("cpu", dtype=torch.float)
     path = os.path.split(record)[0]
     image_files = get_image_files(record)
     path_to_img = os.path.join(path, image_files[0])
-    result = yolo(path_to_img)
-    short_leads_sorted, long_lead = sort_leads(result[0].cpu())
+    #result = yolo(path_to_img)
+    #short_leads_sorted, long_lead = sort_leads(result[0].cpu())
     image = cv2.imread(path_to_img)
 
     # gaussian blur for denoising
     image = cv2.GaussianBlur(image, (3, 3), 100)
-    images = get_cropped_images(image, short_leads_sorted, long_lead)
-    images = torch.tensor(images)
-    images = images.reshape(1, *images.shape).to("cpu" ,dtype=torch.float32)
-    out = classification_model(images)
-    max_index = torch.argmax(out).item()
-    labels = class_dict[max_index]
-    return signal, [labels]
+    #images = get_cropped_images(image, short_leads_sorted, long_lead)
+    image = cv2.resize(image, (512, 512), interpolation=cv2.INTER_LINEAR)
+    image = image.transpose(2, 0, 1) / 255
+    image = torch.tensor(image).to("cpu" ,dtype=torch.float)
+    image = image.reshape(1, *image.shape)
+    out = classification_model(image)
+    predictions = (out >= 0.5).int()
+    predictions = predictions.detach().cpu().numpy()[0]
+    labels = []
+    for idx, prediction in enumerate(predictions):
+        if prediction == 1:
+            labels.append(class_dict[idx])
+    if len(labels) == 0:
+        labels.append("NORM")
+    return signal, labels
 
 
 ################################################################################
@@ -174,8 +183,6 @@ def augment_data(short_leads):
     return np.vstack((short_leads, additional_rows))
 
 
-
-
 def tensor_to_labels(tensor):
     tensor = tensor.squeeze().numpy()  # Remove batch dimension and convert to numpy array
     labels = []
@@ -209,13 +216,3 @@ def save_models(model_folder, digitization_model=None, classification_model=None
         filename = os.path.join(model_folder, 'classification_model.sav')
         joblib.dump(d, filename, protocol=0)
 
-
-if __name__ == '__main__':
-    model_folder = "/home/tdege/CinC_cleaned/model"
-    data_folder = "/home/tdege/CinC_cleaned/Datahandling/20images/"
-    record = '/home/tdege/CinC_cleaned/Datahandling/20images/00001_lr'
-    digitization_model, classification_model = load_models(model_folder, True)
-    classification_model.eval()
-    records = find_records(data_folder)
-    train_models(data_folder, "model", False)
-    #signal, labels = run_models(record, digitization_model, classification_model, True)
